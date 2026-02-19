@@ -12,6 +12,7 @@ import { Plus, Pencil, Trash2, Printer, Download, Eye } from "lucide-react";
 import NavHeader from "@/components/NavHeader";
 import NotificationProfile from "@/components/NotificationProfile";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 
@@ -33,6 +34,8 @@ const VisitorLogs = () => {
     visitorType: "all",
     includeTimeOut: true
   });
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<any>(null);
   
   const storedUser = typeof window !== "undefined" ? localStorage.getItem("user") : null;
   const currentUser = storedUser ? JSON.parse(storedUser) : null;
@@ -107,11 +110,16 @@ const VisitorLogs = () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this visitor log?")) return;
+  const handleDelete = (visitor: any) => {
+    setItemToDelete(visitor);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!itemToDelete) return;
 
     try {
-      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/visitor_logs.php?id=${id}`, {
+      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/visitor_logs.php?id=${itemToDelete.id}`, {
         method: "DELETE",
       });
 
@@ -120,10 +128,11 @@ const VisitorLogs = () => {
       if (!response.ok || !result.success) {
         throw new Error(result.error || "Failed to delete visitor log");
       }
+
       toast.success("Visitor log deleted successfully");
       fetchVisitors();
     } catch (error: any) {
-      toast.error("Failed to delete visitor log");
+      throw new Error(error.message || "Failed to delete visitor log");
     }
   };
 
@@ -553,7 +562,7 @@ const VisitorLogs = () => {
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => handleDelete(visitor.id)}
+                      onClick={() => handleDelete(visitor)}
                     >
                       <Trash2 className="w-4 h-4 text-destructive" />
                     </Button>
@@ -603,6 +612,18 @@ const VisitorLogs = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <DeleteConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        onConfirm={confirmDelete}
+        title="Confirm Deletion"
+        description="This action requires admin password verification."
+        itemName={itemToDelete?.name}
+        requirePassword={currentUser?.role === 'admin'}
+        currentUser={currentUser}
+      />
 
       </div>
     </div>

@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/trash/TrashService.php';
 
 $conn = get_db_connection();
 $method = $_SERVER['REQUEST_METHOD'];
@@ -23,7 +24,7 @@ switch ($method) {
 }
 
 function handle_get(mysqli $conn): void {
-    $result = $conn->query('SELECT * FROM visitor_logs ORDER BY created_at DESC');
+    $result = $conn->query('SELECT * FROM visitor_logs WHERE deleted_at IS NULL ORDER BY created_at DESC');
     if (!$result) {
         send_json(['success' => false, 'error' => $conn->error], 500);
     }
@@ -100,17 +101,31 @@ function handle_delete(mysqli $conn): void {
         send_json(['success' => false, 'error' => 'Missing id'], 400);
     }
 
-    $sql = "DELETE FROM visitor_logs WHERE id=?";
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        send_json(['success' => false, 'error' => $conn->error], 500);
+    // Get current user from session/headers
+    $headers = getallheaders();
+    $userId = $headers['X-User-Id'] ?? null;
+    
+    // If no user ID provided, try to get the first admin user
+    if (!$userId) {
+        $userResult = $conn->query("SELECT id FROM users WHERE role='admin' LIMIT 1");
+        if ($userResult && $userResult->num_rows > 0) {
+            $user = $userResult->fetch_assoc();
+            $userId = $user['id'];
+        }
     }
-
-    $stmt->bind_param('s', $id);
-
-    if (!$stmt->execute()) {
-        send_json(['success' => false, 'error' => $stmt->error], 500);
+    
+    // Use TrashService for soft delete
+    $trashService = new TrashService($conn);
+    $result = $trashService->softDelete(
+        'visitor_log',
+        $id,
+        $userId ? (int)$userId : null,
+        'Visitor Logs'
+    );
+    
+    if ($result['success']) {
+        send_json(['success' => true, 'message' => 'Visitor log moved to trash. You can restore it from the Trash page.']);
+    } else {
+        send_json(['success' => false, 'error' => $result['error']], 500);
     }
-
-    send_json(['success' => true]);
 }

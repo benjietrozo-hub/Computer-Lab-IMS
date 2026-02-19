@@ -16,6 +16,7 @@ import { WaitingListManager } from "@/components/WaitingListManager";
 import NavHeader from "@/components/NavHeader";
 import NotificationProfile from "@/components/NotificationProfile";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 
@@ -89,6 +90,29 @@ const Reservations = () => {
     includePenalties: true
   });
   
+  // Admin borrow requests management state
+  const [borrowRequests, setBorrowRequests] = useState<any[]>([]);
+  const [borrowRequestsLoading, setBorrowRequestsLoading] = useState(true);
+  const [selectedBorrowRequest, setSelectedBorrowRequest] = useState<any>(null);
+  const [borrowRequestViewOpen, setBorrowRequestViewOpen] = useState(false);
+  const [myBorrowRequests, setMyBorrowRequests] = useState<any[]>([]);
+  const [myBorrowRequestsLoading, setMyBorrowRequestsLoading] = useState(true);
+  const [userBorrowRequestViewOpen, setUserBorrowRequestViewOpen] = useState(false);
+  
+  // Borrow dialog state for Available Inventory tab
+  const [borrowDialogOpen, setBorrowDialogOpen] = useState(false);
+  const [borrowItem, setBorrowItem] = useState<any>(null);
+  const [borrowForm, setBorrowForm] = useState({
+    quantity: 1,
+    return_date: "",
+    message: "",
+  });
+  
+  // Delete dialog state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<any>(null);
+  const [deleteType, setDeleteType] = useState<'reservation' | 'borrowRequest'>('reservation');
+  
   const storedUser = typeof window !== "undefined" ? localStorage.getItem("user") : null;
   const currentUser = storedUser ? JSON.parse(storedUser) : null;
   
@@ -117,11 +141,14 @@ const Reservations = () => {
     user_id: "",
     equipment_id: "",
     reservation_date: "",
-    start_time: "09:00",
-    end_time: "11:00",
+    start_time: "00:00",
+    end_time: "23:59",
     quantity: 1,
-    purpose: ""
+    purpose: "",
+    return_date: ""
   });
+  const [createAvailability, setCreateAvailability] = useState<number | null>(null);
+  const [createFullyCommitted, setCreateFullyCommitted] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -132,6 +159,264 @@ const Reservations = () => {
       fetchUsers();
     }
   }, [currentUser?.role]);
+
+  // Load borrow requests for admins
+  useEffect(() => {
+    fetchBorrowRequests();
+  }, [currentUser?.role]);
+
+  // Load my borrow requests for regular users
+  useEffect(() => {
+    if (currentUser?.role && currentUser.role !== 'admin') {
+      fetchMyBorrowRequests();
+    }
+  }, [currentUser?.role, currentUser?.id]);
+
+  const fetchBorrowRequests = async () => {
+    try {
+      setBorrowRequestsLoading(true);
+      const response = await fetch("http://localhost/labmate/labmate-guardian/api/borrow_requests.php");
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Failed to fetch borrow requests");
+      }
+      setBorrowRequests((result.data || []).filter((r: any) => r.status !== 'approved'));
+    } catch (err) {
+      toast.error("Failed to fetch borrow requests");
+    } finally {
+      setBorrowRequestsLoading(false);
+    }
+  };
+
+  const handlePrintAllBorrowRequestsAdmin = () => {
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      const currentDate = new Date().toLocaleDateString();
+      const rows = borrowRequests.map((r: any) => `
+        <tr>
+          <td>${r.borrower_name || '-'}</td>
+          <td>${r.borrower_email || '-'}</td>
+          <td>${r.item || '-'}</td>
+          <td>${r.quantity ?? '-'}</td>
+          <td>${r.request_date ? new Date(r.request_date).toLocaleDateString() : '-'}</td>
+          <td>${r.return_date ? new Date(r.return_date).toLocaleDateString() : '-'}</td>
+          <td>${(r.message || '').toString().replace(/</g, '&lt;').replace(/>/g, '&gt;')}</td>
+          <td>${r.status}</td>
+        </tr>
+      `).join('');
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>Borrow Requests</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 20px; }
+              .header { text-align: center; margin-bottom: 30px; }
+              table { width: 100%; border-collapse: collapse; }
+              th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+              th { background: #f8f9fa; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>Borrow Requests</h1>
+              <p>Generated on ${currentDate}</p>
+              <p>Total: ${borrowRequests.length}</p>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Borrower</th>
+                  <th>Email</th>
+                  <th>Item</th>
+                  <th>Quantity</th>
+                  <th>Request Date</th>
+                  <th>Expected Return</th>
+                  <th>Message</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+              </tbody>
+            </table>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.print();
+      toast.success('Print dialog opened');
+    }
+  };
+
+  const handleGenerateBorrowRequestsPDFAdmin = async () => {
+    try {
+      const el = document.createElement('div');
+      el.style.width = '210mm';
+      el.style.padding = '20mm';
+      el.style.fontFamily = 'Arial, sans-serif';
+      el.style.backgroundColor = 'white';
+      el.style.boxSizing = 'border-box';
+      let html = `
+        <h2 style="text-align:center; margin-bottom: 16px;">Borrow Requests</h2>
+        <table style="width:100%; border-collapse: collapse;">
+          <thead>
+            <tr>
+              <th style="border:1px solid #ddd; padding:8px; text-align:left;">Borrower</th>
+              <th style="border:1px solid #ddd; padding:8px; text-align:left;">Email</th>
+              <th style="border:1px solid #ddd; padding:8px; text-align:left;">Item</th>
+              <th style="border:1px solid #ddd; padding:8px; text-align:left;">Qty</th>
+              <th style="border:1px solid #ddd; padding:8px; text-align:left;">Request Date</th>
+              <th style="border:1px solid #ddd; padding:8px; text-align:left;">Expected Return</th>
+              <th style="border:1px solid #ddd; padding:8px; text-align:left;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      borrowRequests.forEach((r: any) => {
+        html += `
+          <tr>
+            <td style="border:1px solid #ddd; padding:8px;">${r.borrower_name || '-'}</td>
+            <td style="border:1px solid #ddd; padding:8px;">${r.borrower_email || '-'}</td>
+            <td style="border:1px solid #ddd; padding:8px;">${r.item || '-'}</td>
+            <td style="border:1px solid #ddd; padding:8px;">${r.quantity ?? '-'}</td>
+            <td style="border:1px solid #ddd; padding:8px;">${r.request_date ? new Date(r.request_date).toLocaleDateString() : '-'}</td>
+            <td style="border:1px solid #ddd; padding:8px;">${r.return_date ? new Date(r.return_date).toLocaleDateString() : '-'}</td>
+            <td style="border:1px solid #ddd; padding:8px;">${r.status}</td>
+          </tr>
+        `;
+      });
+      html += `</tbody></table>`;
+      el.innerHTML = html;
+      document.body.appendChild(el);
+      const canvas = await html2canvas(el, { scale: 2, useCORS: true, allowTaint: true });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgWidth = 210;
+      const pageHeight = 297;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let position = 0;
+      let heightLeft = imgHeight;
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+      while (heightLeft >= 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+      document.body.removeChild(el);
+      pdf.save(`borrow-requests-${new Date().toISOString().split('T')[0]}.pdf`);
+      toast.success('PDF generated successfully');
+    } catch (e) {
+      toast.error('Failed to generate PDF');
+    }
+  };
+
+  const fetchMyBorrowRequests = async () => {
+    try {
+      setMyBorrowRequestsLoading(true);
+      const response = await fetch("http://localhost/labmate/labmate-guardian/api/borrow_requests.php");
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Failed to fetch borrow requests");
+      }
+      const uid = String(currentUser?.id || "");
+      setMyBorrowRequests((result.data || []).filter((r: any) => String(r.created_by) === uid));
+    } catch (err) {
+      toast.error("Failed to fetch your borrow requests");
+    } finally {
+      setMyBorrowRequestsLoading(false);
+    }
+  };
+
+  const handleApproveBorrowRequest = async (id: string) => {
+    if (!confirm("Approve this borrow request?")) return;
+    const original = [...borrowRequests];
+    setBorrowRequests(prev => prev.map(r => r.id === id ? { ...r, status: 'approved' } : r));
+    try {
+      const body = { status: 'approved', approved_by: currentUser?.id, approved_at: new Date().toISOString() };
+      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/borrow_requests.php?id=${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        setBorrowRequests(original);
+        throw new Error(result.error || 'Failed to approve request');
+      }
+      toast.success('Borrow request approved successfully');
+      fetchBorrowRequests();
+    } catch (e: any) {
+      setBorrowRequests(original);
+      toast.error(e.message || 'Failed to approve request');
+    }
+  };
+
+  const handleRejectBorrowRequest = async (id: string) => {
+    const reason = prompt("Enter rejection reason (optional):") || "";
+    try {
+      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/borrow_requests.php?id=${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'rejected', approved_by: currentUser?.id, approved_at: new Date().toISOString(), rejection_reason: reason })
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Failed to reject request');
+      toast.success('Borrow request rejected');
+      fetchBorrowRequests();
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to reject request');
+    }
+  };
+
+  const handleDeleteBorrowRequest = (request: any) => {
+    setItemToDelete(request);
+    setDeleteType('borrowRequest');
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteReservation = (reservation: any) => {
+    setItemToDelete(reservation);
+    setDeleteType('reservation');
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!itemToDelete) return;
+
+    try {
+      if (deleteType === 'borrowRequest') {
+        const response = await fetch(`http://localhost/labmate/labmate-guardian/api/borrow_requests.php?id=${itemToDelete.id}`, {
+          method: 'DELETE'
+        });
+
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+          throw new Error(result.error || 'Failed to delete request');
+        }
+
+        toast.success('Request deleted successfully');
+        fetchBorrowRequests();
+      } else {
+        const response = await fetch(`http://localhost/labmate/labmate-guardian/api/reservations.php?id=${itemToDelete.id}`, {
+          method: 'DELETE'
+        });
+
+        const result = await response.json();
+        
+        if (!result.success) {
+          throw new Error(result.error || "Failed to delete reservation");
+        }
+
+        toast.success("Reservation deleted successfully");
+        fetchData();
+      }
+    } catch (error: any) {
+      throw new Error(error.message || `Failed to delete ${deleteType === 'borrowRequest' ? 'request' : 'reservation'}`);
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -279,32 +564,285 @@ const Reservations = () => {
     }
   };
 
+  const handlePrintAllBorrowRequests = () => {
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      const currentDate = new Date().toLocaleDateString();
+      const rows = filteredMyBorrowRequests.map((r: any) => `
+        <tr>
+          <td>${r.item || '-'}</td>
+          <td>${r.quantity ?? '-'}</td>
+          <td>${r.request_date ? new Date(r.request_date).toLocaleDateString() : '-'}</td>
+          <td>${r.return_date ? new Date(r.return_date).toLocaleDateString() : '-'}</td>
+          <td>${(r.message || '').toString().replace(/</g, '&lt;').replace(/>/g, '&gt;')}</td>
+          <td>${r.status}</td>
+        </tr>
+      `).join('');
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>My Borrow Requests</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 20px; }
+              .header { text-align: center; margin-bottom: 30px; }
+              table { width: 100%; border-collapse: collapse; }
+              th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+              th { background: #f8f9fa; }
+            </style>
+          </head>
+          <body>
+            <div class="header">
+              <h1>My Borrow Requests</h1>
+              <p>Generated on ${currentDate}</p>
+              <p>Total: ${filteredMyBorrowRequests.length}</p>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Quantity</th>
+                  <th>Request Date</th>
+                  <th>Expected Return</th>
+                  <th>Message</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+              </tbody>
+            </table>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+      printWindow.print();
+      toast.success('Print dialog opened');
+    }
+  };
+
+  const handlePrintBorrowRequest = (request: any) => {
+    const w = window.open('', '_blank');
+    if (w) {
+      w.document.write(`
+        <html>
+          <head>
+            <title>Borrow Request ${request.id}</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 20px; }
+              .section { margin-bottom: 12px; }
+              .label { font-weight: bold; display: inline-block; width: 160px; }
+            </style>
+          </head>
+          <body>
+            <h2>Borrow Request Details</h2>
+            <div class="section"><span class="label">Item:</span> ${request.item}</div>
+            <div class="section"><span class="label">Quantity:</span> ${request.quantity}</div>
+            <div class="section"><span class="label">Request Date:</span> ${request.request_date ? new Date(request.request_date).toLocaleDateString() : '-'}</div>
+            <div class="section"><span class="label">Expected Return:</span> ${request.return_date ? new Date(request.return_date).toLocaleDateString() : '-'}</div>
+            <div class="section"><span class="label">Status:</span> ${request.status}</div>
+            <div class="section"><span class="label">Message:</span> ${(request.message || '-')}
+            </div>
+          </body>
+        </html>
+      `);
+      w.document.close();
+      w.print();
+    }
+  };
+
+  const handleDownloadBorrowRequestPDF = async (request: any) => {
+    try {
+      const el = document.createElement('div');
+      el.style.width = '210mm';
+      el.style.padding = '20mm';
+      el.style.fontFamily = 'Arial, sans-serif';
+      el.style.backgroundColor = 'white';
+      el.style.boxSizing = 'border-box';
+      el.innerHTML = `
+        <h2 style="text-align:center; margin-bottom: 16px;">Borrow Request</h2>
+        <div style="margin-bottom: 8px;"><b>Item:</b> ${request.item}</div>
+        <div style="margin-bottom: 8px;"><b>Quantity:</b> ${request.quantity}</div>
+        <div style="margin-bottom: 8px;"><b>Request Date:</b> ${request.request_date ? new Date(request.request_date).toLocaleDateString() : '-'}</div>
+        <div style="margin-bottom: 8px;"><b>Expected Return:</b> ${request.return_date ? new Date(request.return_date).toLocaleDateString() : '-'}</div>
+        <div style="margin-bottom: 8px;"><b>Status:</b> ${request.status}</div>
+        <div style="margin-bottom: 8px;"><b>Message:</b> ${(request.message || '-')}
+        </div>
+      `;
+      document.body.appendChild(el);
+      const canvas = await html2canvas(el, { scale: 2, useCORS: true, allowTaint: true });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgWidth = 210;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      pdf.addImage(imgData, 'PNG', 0, 0, imgWidth, imgHeight);
+      document.body.removeChild(el);
+      pdf.save(`borrow-request-${request.id}.pdf`);
+      toast.success('PDF downloaded');
+    } catch (e) {
+      toast.error('Failed to generate PDF');
+    }
+  };
+
+  const handleGenerateBorrowRequestsPDF = async () => {
+    try {
+      const el = document.createElement('div');
+      el.style.width = '210mm';
+      el.style.padding = '20mm';
+      el.style.fontFamily = 'Arial, sans-serif';
+      el.style.backgroundColor = 'white';
+      el.style.boxSizing = 'border-box';
+      let html = `
+        <h2 style="text-align:center; margin-bottom: 16px;">My Borrow Requests</h2>
+        <table style="width:100%; border-collapse: collapse;">
+          <thead>
+            <tr>
+              <th style="border:1px solid #ddd; padding:8px; text-align:left;">Item</th>
+              <th style="border:1px solid #ddd; padding:8px; text-align:left;">Qty</th>
+              <th style="border:1px solid #ddd; padding:8px; text-align:left;">Request Date</th>
+              <th style="border:1px solid #ddd; padding:8px; text-align:left;">Expected Return</th>
+              <th style="border:1px solid #ddd; padding:8px; text-align:left;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      filteredMyBorrowRequests.forEach((r: any) => {
+        html += `
+          <tr>
+            <td style="border:1px solid #ddd; padding:8px;">${r.item || '-'}</td>
+            <td style="border:1px solid #ddd; padding:8px;">${r.quantity ?? '-'}</td>
+            <td style="border:1px solid #ddd; padding:8px;">${r.request_date ? new Date(r.request_date).toLocaleDateString() : '-'}</td>
+            <td style="border:1px solid #ddd; padding:8px;">${r.return_date ? new Date(r.return_date).toLocaleDateString() : '-'}</td>
+            <td style="border:1px solid #ddd; padding:8px;">${r.status}</td>
+          </tr>
+        `;
+      });
+      html += `</tbody></table>`;
+      el.innerHTML = html;
+      document.body.appendChild(el);
+      const canvas = await html2canvas(el, { scale: 2, useCORS: true, allowTaint: true });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const imgWidth = 210;
+      const pageHeight = 297;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      let position = 0;
+      let heightLeft = imgHeight;
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+      while (heightLeft >= 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+      document.body.removeChild(el);
+      pdf.save(`my-borrow-requests-${new Date().toISOString().split('T')[0]}.pdf`);
+      toast.success('PDF generated successfully');
+    } catch (e) {
+      toast.error('Failed to generate PDF');
+    }
+  };
+
   const handleViewReservation = (reservation: Reservation) => {
     setSelectedReservationForView(reservation);
     setViewModalOpen(true);
   };
 
-  const handleDeleteReservation = async (reservationId: string) => {
-    if (!confirm("Are you sure you want to delete this reservation?")) {
+  // Open borrow dialog for an equipment item
+  const handleBorrowClick = (item: any) => {
+    if (!currentUser) {
+      navigate("/login");
       return;
     }
+    const effective = getEffectiveAvailability(item);
+    if (effective <= 0) {
+      toast.error("This item is fully committed today");
+      return;
+    }
+    setBorrowItem(item);
+    setBorrowForm({ quantity: 1, return_date: "", message: "" });
+    setBorrowDialogOpen(true);
+  };
 
+  // Submit borrow request
+  const handleBorrowSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser || !borrowItem) {
+      toast.error("User information not found");
+      return;
+    }
+    const quantity = parseInt(String(borrowForm.quantity), 10);
+    if (!quantity || quantity <= 0) {
+      toast.error("Please enter a valid quantity");
+      return;
+    }
+    const effective = getEffectiveAvailability(borrowItem);
+    if (effective <= 0 || quantity > effective) {
+      toast.error("Insufficient availability for this item");
+      return;
+    }
+    const borrowerName = `${currentUser.first_name || ""} ${currentUser.last_name || ""}`.trim() || currentUser.email;
+    const payload = {
+      borrower_name: borrowerName,
+      borrower_email: currentUser.email,
+      item: borrowItem.name,
+      quantity,
+      request_date: new Date().toISOString().split("T")[0],
+      return_date: borrowForm.return_date || null,
+      message: borrowForm.message,
+      created_by: currentUser.id,
+    };
     try {
-      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/reservations.php?id=${reservationId}`, {
-        method: 'DELETE'
+      const response = await fetch("http://localhost/labmate/labmate-guardian/api/borrow_requests.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
-
       const result = await response.json();
-      
-      if (result.success) {
-        toast.success("Reservation deleted successfully");
-        fetchData();
-      } else {
-        toast.error(result.error || "Failed to delete reservation");
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Failed to submit borrow request");
       }
-    } catch (error) {
-      console.error('Error deleting reservation:', error);
-      toast.error("Failed to delete reservation");
+      if (result.status === "waiting") {
+        toast.success("Added to waiting list due to limited inventory");
+      } else {
+        toast.success("Borrow request submitted successfully");
+      }
+
+      // Auto-create a reservation to hold items for this account (same-day hold)
+      try {
+        const reservationPayload = {
+          equipment_id: borrowItem.id,
+          user_id: currentUser.id,
+          reservation_date: new Date().toISOString().split("T")[0],
+          start_time: "00:00",
+          end_time: "23:59",
+          quantity_reserved: quantity,
+          purpose: borrowForm.message || `Auto-reserved for borrow request of ${borrowItem.name}`,
+          user_type: mapRoleToUserType(currentUser.role || 'student')
+        } as any;
+
+        const reserveResp = await fetch("http://localhost/labmate/labmate-guardian/api/reservations.php", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(reservationPayload)
+        });
+        const reserveResult = await reserveResp.json();
+        if (!reserveResp.ok || !reserveResult.success) {
+          console.warn("Auto-reservation failed:", reserveResult);
+          // Non-blocking; user already has a request recorded
+        } else {
+          toast.success("Item reserved for your account while pending");
+        }
+      } catch (autoResErr) {
+        console.warn("Auto-reservation error:", autoResErr);
+      }
+      setBorrowDialogOpen(false);
+      setBorrowItem(null);
+      setBorrowForm({ quantity: 1, return_date: "", message: "" });
+      // Refresh my borrow requests list for the user
+      try { await fetchMyBorrowRequests(); } catch {}
+    } catch (error: any) {
+      toast.error(error.message || "Failed to submit borrow request");
     }
   };
 
@@ -565,8 +1103,10 @@ const Reservations = () => {
       return;
     }
 
-    const now = new Date();
-    if (startDateTime < now) {
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
+    const selectedMidnight = new Date(`${createForm.reservation_date}T00:00:00`);
+    if (selectedMidnight < todayMidnight) {
       toast.error("You cannot create a reservation in the past.");
       return;
     }
@@ -576,9 +1116,9 @@ const Reservations = () => {
       return;
     }
 
-    const equipmentItem = equipment.find(e => e.id === createForm.equipment_id);
-    if (equipmentItem && createForm.quantity > equipmentItem.quantity) {
-      toast.error(`Requested quantity exceeds available units (${equipmentItem.quantity}).`);
+    const effAvail = computeAvailabilityForEquipment(createForm.equipment_id);
+    if (effAvail <= 0 || createForm.quantity > effAvail) {
+      toast.error(`Selected item is fully committed for the chosen time or exceeds availability (${Math.max(0, effAvail)}).`);
       return;
     }
 
@@ -618,15 +1158,48 @@ const Reservations = () => {
 
       if (response.ok && result.success) {
         toast.success("Reservation created successfully.");
+        const equipmentItemForBorrow = equipment.find((it) => String(it.id) === String(createForm.equipment_id));
+        const selectedUserForBorrow = users.find((u) => String(u.id) === String(createForm.user_id));
+        if (equipmentItemForBorrow && selectedUserForBorrow?.email) {
+          const fullName = (selectedUserForBorrow.first_name && selectedUserForBorrow.last_name)
+            ? `${selectedUserForBorrow.first_name} ${selectedUserForBorrow.last_name}`
+            : (selectedUserForBorrow.first_name || selectedUserForBorrow.last_name || selectedUserForBorrow.email);
+          const borrowPayload = {
+            borrower_name: fullName,
+            borrower_email: selectedUserForBorrow.email,
+            item: equipmentItemForBorrow.name,
+            quantity: createForm.quantity,
+            request_date: createForm.reservation_date,
+            return_date: createForm.return_date || null,
+            message: createForm.purpose || `Reservation created by admin`,
+            created_by: selectedUserForBorrow.id,
+          } as any;
+          try {
+            const brResp = await fetch("http://localhost/labmate/labmate-guardian/api/borrow_requests.php", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(borrowPayload)
+            });
+            const brResult = await brResp.json();
+            if (!brResp.ok || !brResult.success) {
+              toast.error("Borrow request creation failed for the selected user");
+            } else {
+              toast.success("Borrow request recorded for selected user");
+            }
+          } catch (e) {
+            toast.error("Borrow request creation failed for the selected user");
+          }
+        }
         setCreateOpen(false);
         setCreateForm({
           user_id: "",
           equipment_id: "",
           reservation_date: "",
-          start_time: "09:00",
-          end_time: "11:00",
+          start_time: "00:00",
+          end_time: "23:59",
           quantity: 1,
-          purpose: ""
+          purpose: "",
+          return_date: ""
         });
         setSelectedUserName("");
         fetchData();
@@ -663,14 +1236,85 @@ const Reservations = () => {
     }
   };
 
+  const todayStr = new Date().toISOString().split('T')[0];
+  const getEffectiveAvailability = (item: any) => {
+    const stock = Number(item?.quantity ?? 0);
+    const pendingBorrow = (borrowRequests || [])
+      .filter((r: any) => r.status === 'pending' && r.item === item.name)
+      .reduce((sum: number, r: any) => sum + (Number(r.quantity) || 0), 0);
+    const todaysReserved = (reservations || [])
+      .filter((r: any) => r.status === 'approved' && String(r.equipment_id) === String(item.id) && r.reservation_date === todayStr)
+      .reduce((sum: number, r: any) => sum + (Number(r.quantity_reserved) || 0), 0);
+    return stock - pendingBorrow - todaysReserved;
+  };
+
+  const timesOverlap = (aStart: string, aEnd: string, bStart: string, bEnd: string) => {
+    return aStart < bEnd && aEnd > bStart;
+  };
+
+  const computeAvailabilityForEquipment = (equipmentId: string) => {
+    const eq = equipment.find((e) => String(e.id) === String(equipmentId));
+    if (!eq) return 0;
+    const stock = Number(eq.quantity) || 0;
+    const pendingBorrow = (borrowRequests || [])
+      .filter((r: any) => r.status === 'pending' && r.item === eq.name)
+      .reduce((sum: number, r: any) => sum + (Number(r.quantity) || 0), 0);
+    const reservedSlot = (reservations || [])
+      .filter((r: any) =>
+        r.status === 'approved' &&
+        String(r.equipment_id) === String(eq.id) &&
+        r.reservation_date === createForm.reservation_date &&
+        timesOverlap(r.start_time, r.end_time, createForm.start_time, createForm.end_time)
+      )
+      .reduce((sum: number, r: any) => sum + (Number(r.quantity_reserved) || 0), 0);
+    return stock - pendingBorrow - reservedSlot;
+  };
+
+  useEffect(() => {
+    if (!createForm.equipment_id || !createForm.reservation_date) {
+      setCreateAvailability(null);
+      setCreateFullyCommitted(false);
+      return;
+    }
+    const eff = computeAvailabilityForEquipment(createForm.equipment_id);
+    setCreateAvailability(eff);
+    setCreateFullyCommitted(eff <= 0);
+  }, [createForm.equipment_id, createForm.reservation_date, createForm.start_time, createForm.end_time, borrowRequests, reservations]);
+
   const filteredReservations = reservations.filter(reservation => {
+    const isAdmin = currentUser?.role === 'admin';
+    const matchesUser = isAdmin || String(reservation.user_id) === String(currentUser?.id);
     const matchesStatus = filterStatus === "all" || reservation.status === filterStatus;
-    const matchesEquipment = filterEquipment === "all" || reservation.equipment_id === filterEquipment;
+    const matchesEquipment = filterEquipment === "all" || String(reservation.equipment_id) === String(filterEquipment);
     const matchesSearch = searchTerm === "" || 
       reservation.equipment_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       reservation.user_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      reservation.purpose?.toLowerCase().includes(searchTerm.toLowerCase());
+      reservation.purpose?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (reservation.reservation_number && reservation.reservation_number.toLowerCase().includes(searchTerm.toLowerCase()));
     
+    return matchesUser && matchesStatus && matchesEquipment && matchesSearch;
+  }).sort((a, b) => {
+    // Sort by date (newest first) and then by time
+    const dateA = new Date(`${a.reservation_date}T${a.start_time}`);
+    const dateB = new Date(`${b.reservation_date}T${b.start_time}`);
+    return dateB.getTime() - dateA.getTime();
+  });
+  // Apply the same filters to the user's borrow requests list shown in "My Reservation"
+  const filteredMyBorrowRequests = myBorrowRequests.filter((request: any) => {
+    const matchesStatus = filterStatus === "all" || request.status === filterStatus;
+    const matchesEquipment = (() => {
+      if (filterEquipment === "all") return true;
+      const eq = equipment.find((e) => String(e.id) === String(filterEquipment));
+      // borrow requests store item name (string), match by name
+      return eq ? request.item === eq.name : true;
+    })();
+    const term = searchTerm.trim().toLowerCase();
+    const matchesSearch = term === "" || [
+      request.item,
+      request.borrower_name,
+      request.borrower_email,
+      request.message,
+    ].some((v: any) => v?.toString().toLowerCase().includes(term));
     return matchesStatus && matchesEquipment && matchesSearch;
   });
 
@@ -789,7 +1433,15 @@ const Reservations = () => {
                         <Label htmlFor="equipmentSelect">Item</Label>
                         <Select
                           value={createForm.equipment_id}
-                          onValueChange={(value) => setCreateForm(prev => ({ ...prev, equipment_id: value }))}
+                          onValueChange={(value) => {
+                            setCreateForm(prev => ({ ...prev, equipment_id: value }));
+                            const eff = computeAvailabilityForEquipment(value);
+                            setCreateAvailability(eff);
+                            setCreateFullyCommitted(eff <= 0);
+                            if (eff <= 0) {
+                              toast.error("Selected item is fully committed for the chosen time");
+                            }
+                          }}
                         >
                           <SelectTrigger id="equipmentSelect">
                             <SelectValue placeholder="Select item" />
@@ -802,38 +1454,26 @@ const Reservations = () => {
                             ))}
                           </SelectContent>
                         </Select>
+                        {createAvailability !== null && (
+                          <div className="mt-1 text-xs">
+                            {createAvailability <= 0 ? (
+                              <span className="text-red-600">Fully committed for selected date/time</span>
+                            ) : (
+                              <span className="text-gray-500">Available in selected slot: {createAvailability}</span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 gap-4">
                       <div>
-                        <Label htmlFor="reservation_date">Date</Label>
+                        <Label htmlFor="return_date">Expected Return Date</Label>
                         <Input
-                          id="reservation_date"
+                          id="return_date"
                           type="date"
-                          value={createForm.reservation_date}
-                          onChange={(e) => setCreateForm(prev => ({ ...prev, reservation_date: e.target.value }))}
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="start_time">Start Time</Label>
-                        <Input
-                          id="start_time"
-                          type="time"
-                          value={createForm.start_time}
-                          onChange={(e) => setCreateForm(prev => ({ ...prev, start_time: e.target.value }))}
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="end_time">End Time</Label>
-                        <Input
-                          id="end_time"
-                          type="time"
-                          value={createForm.end_time}
-                          onChange={(e) => setCreateForm(prev => ({ ...prev, end_time: e.target.value }))}
-                          required
+                          value={createForm.return_date}
+                          onChange={(e) => setCreateForm(prev => ({ ...prev, return_date: e.target.value }))}
                         />
                       </div>
                     </div>
@@ -845,6 +1485,7 @@ const Reservations = () => {
                           id="quantity"
                           type="number"
                           min={1}
+                          max={createAvailability && createAvailability > 0 ? createAvailability : undefined}
                           value={createForm.quantity}
                           onChange={(e) =>
                             setCreateForm(prev => ({
@@ -867,7 +1508,7 @@ const Reservations = () => {
                     </div>
 
                     <div className="flex gap-2">
-                      <Button type="submit" disabled={creating}>
+                      <Button type="submit" disabled={creating || (createAvailability !== null && (createAvailability <= 0 || createForm.quantity > createAvailability))}>
                         Create
                       </Button>
                       <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
@@ -891,37 +1532,6 @@ const Reservations = () => {
               Calendar View
             </Button>
           </div>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={handlePrintAllReservations}
-              disabled={loading || filteredReservations.length === 0}
-            >
-              <Printer className="w-4 h-4 mr-2" />
-              Print All
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                if (filteredReservations.length > 0) {
-                  setSelectedReservationForView(filteredReservations[0]);
-                  setViewModalOpen(true);
-                }
-              }}
-              disabled={loading || filteredReservations.length === 0}
-            >
-              <Eye className="w-4 h-4 mr-2" />
-              View Sample
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => setPdfModalOpen(true)}
-              disabled={loading || filteredReservations.length === 0}
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Generate PDF
-            </Button>
-          </div>
         </div>
 
         {viewMode === "calendar" ? (
@@ -932,19 +1542,421 @@ const Reservations = () => {
             onReservationCreate={fetchData}
           />
         ) : (
-          <Tabs defaultValue="reservations" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-2">
+          <Tabs defaultValue={currentUser?.role === 'admin' ? 'reservations' : 'available-inventory'} className="space-y-6">
+            <TabsList className={`grid w-full grid-cols-3`}>
+              <TabsTrigger value="available-inventory">Available Inventory</TabsTrigger>
               <TabsTrigger value="reservations">Reservations</TabsTrigger>
               <TabsTrigger value="waiting-list">Waiting List</TabsTrigger>
             </TabsList>
 
+            <TabsContent value="available-inventory">
+          <Card>
+                  <CardHeader>
+                    <CardTitle>Available Inventory</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {equipment.filter((e) => (e?.quantity ?? 0) > 0).length > 0 ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {equipment
+                          .filter((e) => (e?.quantity ?? 0) > 0)
+                          .map((item) => (
+                            <div key={item.id} className={`border rounded-lg p-4 hover:shadow-md transition-shadow bg-white ${getEffectiveAvailability(item) <= 0 ? 'border-red-300 bg-red-50' : ''}`}>
+                              <div className="flex justify-between items-start mb-3">
+                                <div className="flex-1">
+                                  <h3 className="font-semibold text-gray-900 mb-1">{item.name}</h3>
+                                  <span className="inline-block px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">
+                                    {item.category}
+                                  </span>
+                                </div>
+                                <div className="pl-2 pt-1">
+                                  {getEffectiveAvailability(item) <= 0 && (
+                                    <Badge variant="destructive">Fully committed</Badge>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="space-y-2 text-sm">
+                                <div className="text-gray-600 line-clamp-2">
+                                  {item.item_description}
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-xs">
+                                  <div>
+                                    <span className="font-medium text-gray-700">Quantity:</span>
+                                    <span className="ml-1 text-gray-600">{item.quantity}</span>
+                                  </div>
+                                  <div>
+                                    <span className="font-medium text-gray-700">Price:</span>
+                                    <span className="ml-1 text-gray-600">${item.price ? (typeof item.price === 'number' ? item.price.toFixed(2) : parseFloat(item.price).toFixed(2)) : '0.00'}</span>
+                                  </div>
+                                  <div>
+                                    <span className="font-medium text-gray-700">Condition:</span>
+                                    <span className="ml-1 text-gray-600">{item.condition || 'N/A'}</span>
+                                  </div>
+                                  <div>
+                                    <span className="font-medium text-gray-700">Assigned:</span>
+                                    <span className="ml-1 text-gray-600">{item.assigned_to || 'Unassigned'}</span>
+                                  </div>
+                                </div>
+                                {item.serial_number && (
+                                  <div className="text-xs">
+                                    <span className="font-medium text-gray-700">Serial:</span>
+                                    <span className="ml-1 text-gray-600 font-mono">{item.serial_number}</span>
+                                  </div>
+                                )}
+                                <div className="text-xs text-gray-500 pt-2 border-t">
+                                  Added: {item.date ? new Date(item.date).toLocaleDateString() : ''}
+                                </div>
+                                <div className="mt-3 flex justify-end">
+                                  {getEffectiveAvailability(item) <= 0 ? (
+                                    <Button size="sm" variant="destructive" disabled>
+                                      Fully committed
+                                    </Button>
+                                  ) : (
+                                    <Button size="sm" onClick={() => handleBorrowClick(item)}>
+                                      Borrow
+                                    </Button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    ) : (
+                      <div className="text-center py-8 text-gray-500">No available inventory</div>
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
             <TabsContent value="reservations">
+          {currentUser?.role !== 'admin' && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Calendar className="w-5 h-5" />
-                Reservation Management
+                My Reservation
               </CardTitle>
+              
+              <div className="flex flex-wrap gap-4 mt-4">
+                <div className="flex-1 min-w-[200px]">
+                  <Input
+                    placeholder="Search reservations..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full"
+                  />
+                </div>
+                
+                <Select value={filterStatus} onValueChange={setFilterStatus}>
+                  <SelectTrigger className="w-[150px]">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Status</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="approved">Approved</SelectItem>
+                    <SelectItem value="rejected">Rejected</SelectItem>
+                  </SelectContent>
+                </Select>
+                
+                <Select value={filterEquipment} onValueChange={setFilterEquipment}>
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue placeholder="Equipment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Equipment</SelectItem>
+                    {equipment.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                
+                <Button onClick={fetchData} variant="outline" size="icon">
+                  <RefreshCw className="w-4 h-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            
+            <CardContent></CardContent>
+          </Card>
+          )}
+          {currentUser?.role !== 'admin' && (
+            <Card className="mb-6">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    {myBorrowRequestsLoading && <span className="text-xs text-muted-foreground">Loading...</span>}
+                  </CardTitle>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={handlePrintAllBorrowRequests}
+                      disabled={myBorrowRequestsLoading || filteredMyBorrowRequests.length === 0}
+                    >
+                      <Printer className="w-4 h-4 mr-2" />
+                      Print All
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => setUserBorrowRequestViewOpen(true)}
+                      disabled={myBorrowRequestsLoading || filteredMyBorrowRequests.length === 0}
+                    >
+                      <Eye className="w-4 h-4 mr-2" />
+                      View All
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={handleGenerateBorrowRequestsPDF}
+                      disabled={myBorrowRequestsLoading || filteredMyBorrowRequests.length === 0}
+                    >
+                      <Download className="w-4 h-4 mr-2" />
+                      Generate PDF
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="border rounded-lg overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Item</TableHead>
+                        <TableHead>Quantity</TableHead>
+                        <TableHead>Request Date</TableHead>
+                        <TableHead>Expected Return</TableHead>
+                        <TableHead>Message</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {myBorrowRequestsLoading ? (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center">Loading...</TableCell>
+                        </TableRow>
+                      ) : filteredMyBorrowRequests.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center text-muted-foreground">You have no borrow requests.</TableCell>
+                        </TableRow>
+                      ) : (
+                        filteredMyBorrowRequests.map((request) => (
+                          <TableRow key={request.id}>
+                            <TableCell className="font-medium">{request.item}</TableCell>
+                            <TableCell>{request.quantity}</TableCell>
+                            <TableCell>{new Date(request.request_date).toLocaleDateString()}</TableCell>
+                            <TableCell>{request.return_date ? new Date(request.return_date).toLocaleDateString() : 'N/A'}</TableCell>
+                            <TableCell>
+                              <div className="max-w-xs truncate" title={request.message || 'No message provided'}>
+                                {request.message || 'No message'}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {request.status === 'pending' && (
+                                <Badge variant="outline" className="bg-orange-100 text-orange-800 border-orange-200">Pending Approval</Badge>
+                              )}
+                              {request.status === 'approved' && (
+                                <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-200">Approved</Badge>
+                              )}
+                              {request.status === 'rejected' && (
+                                <Badge variant="outline" className="bg-red-100 text-red-800 border-red-200">Rejected</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right space-x-1">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => { setSelectedBorrowRequest(request); setUserBorrowRequestViewOpen(true); }}
+                                title="View details"
+                              >
+                                <Eye className="w-4 h-4 text-blue-600" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handlePrintBorrowRequest(request)}
+                                title="Print"
+                              >
+                                <Printer className="w-4 h-4 text-gray-700" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleDownloadBorrowRequestPDF(request)}
+                                title="Download PDF"
+                              >
+                                <Download className="w-4 h-4 text-gray-700" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* User View Details Modal */}
+                <Dialog open={userBorrowRequestViewOpen} onOpenChange={setUserBorrowRequestViewOpen}>
+                  <DialogContent className="max-w-6xl">
+                    <DialogHeader>
+                      <DialogTitle>All My Borrow Requests</DialogTitle>
+                    </DialogHeader>
+                    <div className="border rounded-lg overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Item</TableHead>
+                            <TableHead>Quantity</TableHead>
+                            <TableHead>Request Date</TableHead>
+                            <TableHead>Expected Return</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {filteredMyBorrowRequests.map((request) => (
+                            <TableRow key={request.id}>
+                              <TableCell className="font-medium">{request.item}</TableCell>
+                              <TableCell>{request.quantity}</TableCell>
+                              <TableCell>{new Date(request.request_date).toLocaleDateString()}</TableCell>
+                              <TableCell>{request.return_date ? new Date(request.return_date).toLocaleDateString() : 'N/A'}</TableCell>
+                              <TableCell>
+                                {request.status === 'pending' && (
+                                  <Badge variant="outline" className="bg-orange-100 text-orange-800 border-orange-200">Pending</Badge>
+                                )}
+                                {request.status === 'approved' && (
+                                  <Badge variant="outline" className="bg-green-100 text-green-800 border-green-200">Approved</Badge>
+                                )}
+                                {request.status === 'rejected' && (
+                                  <Badge variant="outline" className="bg-red-100 text-red-800 border-red-200">Rejected</Badge>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right space-x-1">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    setSelectedBorrowRequest(request);
+                                    setUserBorrowRequestViewOpen(false);
+                                    setTimeout(() => setUserBorrowRequestViewOpen(true), 100);
+                                  }}
+                                  title="View details"
+                                >
+                                  <Eye className="w-4 h-4 text-blue-600" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handlePrintBorrowRequest(request)}
+                                  title="Print"
+                                >
+                                  <Printer className="w-4 h-4 text-gray-700" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleDownloadBorrowRequestPDF(request)}
+                                  title="Download PDF"
+                                >
+                                  <Download className="w-4 h-4 text-gray-700" />
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    {selectedBorrowRequest && (
+                      <div className="space-y-6">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <h4 className="font-semibold text-sm text-muted-foreground">Borrower Information</h4>
+                            <div className="mt-2 space-y-1">
+                              <p><span className="font-medium">Name:</span> {selectedBorrowRequest.borrower_name || currentUser?.first_name}</p>
+                              <p><span className="font-medium">Email:</span> {selectedBorrowRequest.borrower_email || currentUser?.email}</p>
+                            </div>
+                          </div>
+                          <div>
+                            <h4 className="font-semibold text-sm text-muted-foreground">Request Status</h4>
+                            <div className="mt-2">
+                              {selectedBorrowRequest.status === 'pending' && (
+                                <Badge variant="outline" className="bg-orange-100 text-orange-800 border-orange-200">Pending Approval</Badge>
+                              )}
+                              {selectedBorrowRequest.status === 'approved' && (
+                                <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-200">Approved</Badge>
+                              )}
+                              {selectedBorrowRequest.status === 'rejected' && (
+                                <Badge variant="outline" className="bg-red-100 text-red-800 border-red-200">Rejected</Badge>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <h4 className="font-semibold text-sm text-muted-foreground">Item Details</h4>
+                          <div className="mt-2 grid grid-cols-3 gap-4">
+                            <div>
+                              <p><span className="font-medium">Item:</span> {selectedBorrowRequest.item}</p>
+                            </div>
+                            <div>
+                              <p><span className="font-medium">Quantity:</span> {selectedBorrowRequest.quantity}</p>
+                            </div>
+                            <div>
+                              <p><span className="font-medium">Request Date:</span> {selectedBorrowRequest.request_date ? new Date(selectedBorrowRequest.request_date).toLocaleDateString() : 'N/A'}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {selectedBorrowRequest.return_date && (
+                          <div>
+                            <h4 className="font-semibold text-sm text-muted-foreground">Expected Return</h4>
+                            <p className="mt-1">{new Date(selectedBorrowRequest.return_date).toLocaleDateString()}</p>
+                          </div>
+                        )}
+
+                        <div>
+                          <h4 className="font-semibold text-sm text-muted-foreground">Purpose / Message</h4>
+                          <div className="mt-2 p-3 bg-muted rounded-lg">
+                            <p className="whitespace-pre-wrap">{selectedBorrowRequest.message || 'No message provided'}</p>
+                          </div>
+                        </div>
+
+                        <div className="flex justify-between pt-4 border-t">
+                          <div className="text-sm text-muted-foreground">
+                            <p>Request ID: {selectedBorrowRequest.id}</p>
+                            <p>Created: {selectedBorrowRequest.created_at ? new Date(selectedBorrowRequest.created_at).toLocaleString() : 'N/A'}</p>
+                          </div>
+                          <div className="space-x-2">
+                            <Button size="sm" variant="outline" onClick={() => handlePrintBorrowRequest(selectedBorrowRequest)}>
+                              <Printer className="w-4 h-4 mr-2" />
+                              Print
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => handleDownloadBorrowRequestPDF(selectedBorrowRequest)}>
+                              <Download className="w-4 h-4 mr-2" />
+                              PDF
+                            </Button>
+                            <Button size="sm" variant="default" onClick={() => setUserBorrowRequestViewOpen(false)}>
+                              Close
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </DialogContent>
+                </Dialog>
+              </CardContent>
+            </Card>
+          )}
+
+          {currentUser?.role === 'admin' && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <Calendar className="w-5 h-5" />
+                  Reservation Management
+                </CardTitle>
+              </div>
               
               <div className="flex flex-wrap gap-4 mt-4">
                 <div className="flex-1 min-w-[200px]">
@@ -994,8 +2006,9 @@ const Reservations = () => {
               {loading ? (
                 <div className="text-center py-8">Loading reservations...</div>
               ) : filteredReservations.length > 0 ? (
-                <div className="overflow-x-auto">
-                  <Table>
+                <div>
+                  <div className="overflow-x-auto">
+                    <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead className="w-[120px]">Reservation #</TableHead>
@@ -1111,7 +2124,7 @@ const Reservations = () => {
                                   <Button
                                     size="sm"
                                     variant="destructive"
-                                    onClick={() => handleDeleteReservation(reservation.id)}
+                                    onClick={() => handleDeleteReservation(reservation)}
                                     title="Delete"
                                   >
                                     <Trash2 className="w-4 h-4" />
@@ -1124,14 +2137,295 @@ const Reservations = () => {
                       ))}
                     </TableBody>
                   </Table>
+                  </div>
                 </div>
-              ) : (
-                <div className="text-center py-8 text-gray-500">
-                  No reservations found
-                </div>
-              )}
+              ) : null}
             </CardContent>
           </Card>
+          )}
+
+          {currentUser?.role === 'admin' && (
+            <Card className="mb-6">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    Reservations
+                    {borrowRequestsLoading && <span className="text-xs text-muted-foreground">Loading...</span>}
+                  </CardTitle>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={handlePrintAllBorrowRequestsAdmin}
+                      disabled={borrowRequestsLoading || borrowRequests.length === 0}
+                    >
+                      <Printer className="w-4 h-4 mr-2" />
+                      Print All
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => setBorrowRequestViewOpen(true)}
+                      disabled={borrowRequestsLoading || borrowRequests.length === 0}
+                    >
+                      <Eye className="w-4 h-4 mr-2" />
+                      View All
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={handleGenerateBorrowRequestsPDFAdmin}
+                      disabled={borrowRequestsLoading || borrowRequests.length === 0}
+                    >
+                      <Download className="w-4 h-4 mr-2" />
+                      Generate PDF
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="border rounded-lg overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Borrower</TableHead>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Item</TableHead>
+                        <TableHead>Quantity</TableHead>
+                        <TableHead>Request Date</TableHead>
+                        <TableHead>Expected Return</TableHead>
+                        <TableHead>Message</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {borrowRequestsLoading ? (
+                        <TableRow>
+                          <TableCell colSpan={9} className="text-center">Loading...</TableCell>
+                        </TableRow>
+                      ) : borrowRequests.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={9} className="text-center text-muted-foreground">No borrow requests found.</TableCell>
+                        </TableRow>
+                      ) : (
+                        borrowRequests.map((request) => (
+                          <TableRow key={request.id}>
+                            <TableCell className="font-medium">{request.borrower_name}</TableCell>
+                            <TableCell>{request.borrower_email}</TableCell>
+                            <TableCell>{request.item}</TableCell>
+                            <TableCell>{request.quantity}</TableCell>
+                            <TableCell>{new Date(request.request_date).toLocaleDateString()}</TableCell>
+                            <TableCell>{request.return_date ? new Date(request.return_date).toLocaleDateString() : 'N/A'}</TableCell>
+                            <TableCell>
+                              <div className="max-w-xs truncate" title={request.message || 'No message provided'}>
+                                {request.message || 'No message'}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {request.status === 'pending' && (
+                                <Badge variant="outline" className="bg-orange-100 text-orange-800 border-orange-200">Pending Approval</Badge>
+                              )}
+                              {request.status === 'approved' && (
+                                <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-200">Approved</Badge>
+                              )}
+                              {request.status === 'rejected' && (
+                                <Badge variant="outline" className="bg-red-100 text-red-800 border-red-200">Rejected</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right space-x-2">
+                              <Button size="sm" variant="ghost" onClick={() => { setSelectedBorrowRequest(request); setBorrowRequestViewOpen(true); }} title="View details">
+                                <Eye className="w-4 h-4 text-blue-600" />
+                              </Button>
+                              {request.status === 'pending' && (
+                                <>
+                                  <Button size="sm" variant="ghost" onClick={() => handleApproveBorrowRequest(request.id)} title="Approve request">
+                                    <CheckCircle className="w-4 h-4 text-green-600" />
+                                  </Button>
+                                  <Button size="sm" variant="ghost" onClick={() => handleRejectBorrowRequest(request.id)} title="Reject request">
+                                    <XCircle className="w-4 h-4 text-red-600" />
+                                  </Button>
+                                </>
+                              )}
+                              <Button size="sm" variant="ghost" onClick={() => handleDeleteBorrowRequest(request)} title="Delete request">
+                                <Trash2 className="w-4 h-4 text-red-600" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* View Details Modal */}
+                <Dialog open={borrowRequestViewOpen} onOpenChange={setBorrowRequestViewOpen}>
+                  <DialogContent className="max-w-6xl max-h-[80vh] flex flex-col">
+                    <DialogHeader>
+                      <DialogTitle>All Borrow Requests</DialogTitle>
+                      <p className="text-sm text-muted-foreground">
+                        View and manage all equipment borrow requests. You can approve, reject, or view details of each request.
+                      </p>
+                    </DialogHeader>
+                    <div className="border rounded-lg overflow-hidden flex-1 flex flex-col">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Borrower</TableHead>
+                            <TableHead>Email</TableHead>
+                            <TableHead>Item</TableHead>
+                            <TableHead>Quantity</TableHead>
+                            <TableHead>Request Date</TableHead>
+                            <TableHead>Expected Return</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {borrowRequests.map((request) => (
+                            <TableRow key={request.id}>
+                              <TableCell className="font-medium">{request.borrower_name || 'N/A'}</TableCell>
+                              <TableCell>{request.borrower_email || 'N/A'}</TableCell>
+                              <TableCell>{request.item}</TableCell>
+                              <TableCell>{request.quantity}</TableCell>
+                              <TableCell>{new Date(request.request_date).toLocaleDateString()}</TableCell>
+                              <TableCell>{request.return_date ? new Date(request.return_date).toLocaleDateString() : 'N/A'}</TableCell>
+                              <TableCell>
+                                {request.status === 'pending' && (
+                                  <Badge variant="outline" className="bg-orange-100 text-orange-800 border-orange-200">Pending</Badge>
+                                )}
+                                {request.status === 'approved' && (
+                                  <Badge variant="outline" className="bg-green-100 text-green-800 border-green-200">Approved</Badge>
+                                )}
+                                {request.status === 'rejected' && (
+                                  <Badge variant="outline" className="bg-red-100 text-red-800 border-red-200">Rejected</Badge>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right space-x-1">
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => {
+                                    setSelectedBorrowRequest(request);
+                                    setBorrowRequestViewOpen(false);
+                                    setTimeout(() => setBorrowRequestViewOpen(true), 100);
+                                  }}
+                                  title="View details"
+                                >
+                                  <Eye className="w-4 h-4 text-blue-600" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handlePrintBorrowRequest(request)}
+                                  title="Print"
+                                >
+                                  <Printer className="w-4 h-4 text-gray-700" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => handleDownloadBorrowRequestPDF(request)}
+                                  title="Download PDF"
+                                >
+                                  <Download className="w-4 h-4 text-gray-700" />
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    {selectedBorrowRequest && (
+                      <div className="space-y-6">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <h4 className="font-semibold text-sm text-muted-foreground">Borrower Information</h4>
+                            <div className="mt-2 space-y-1">
+                              <p><span className="font-medium">Name:</span> {selectedBorrowRequest.borrower_name}</p>
+                              <p><span className="font-medium">Email:</span> {selectedBorrowRequest.borrower_email}</p>
+                            </div>
+                          </div>
+                          <div>
+                            <h4 className="font-semibold text-sm text-muted-foreground">Request Status</h4>
+                            <div className="mt-2">
+                              {selectedBorrowRequest.status === 'pending' && (
+                                <Badge variant="outline" className="bg-orange-100 text-orange-800 border-orange-200">Pending Approval</Badge>
+                              )}
+                              {selectedBorrowRequest.status === 'approved' && (
+                                <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-200">Approved</Badge>
+                              )}
+                              {selectedBorrowRequest.status === 'rejected' && (
+                                <Badge variant="outline" className="bg-red-100 text-red-800 border-red-200">Rejected</Badge>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div>
+                          <h4 className="font-semibold text-sm text-muted-foreground">Item Details</h4>
+                          <div className="mt-2 grid grid-cols-3 gap-4">
+                            <div>
+                              <p><span className="font-medium">Item:</span> {selectedBorrowRequest.item}</p>
+                            </div>
+                            <div>
+                              <p><span className="font-medium">Quantity:</span> {selectedBorrowRequest.quantity}</p>
+                            </div>
+                            <div>
+                              <p><span className="font-medium">Request Date:</span> {new Date(selectedBorrowRequest.request_date).toLocaleDateString()}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {selectedBorrowRequest.return_date && (
+                          <div>
+                            <h4 className="font-semibold text-sm text-muted-foreground">Expected Return</h4>
+                            <p className="mt-1">{new Date(selectedBorrowRequest.return_date).toLocaleDateString()}</p>
+                          </div>
+                        )}
+
+                        <div>
+                          <h4 className="font-semibold text-sm text-muted-foreground">Purpose / Message</h4>
+                          <div className="mt-2 p-3 bg-muted rounded-lg">
+                            <p className="whitespace-pre-wrap">{selectedBorrowRequest.message || 'No message provided'}</p>
+                          </div>
+                        </div>
+
+                        {selectedBorrowRequest.rejection_reason && (
+                          <div>
+                            <h4 className="font-semibold text-sm text-muted-foreground">Rejection Reason</h4>
+                            <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                              <p className="text-red-800">{selectedBorrowRequest.rejection_reason}</p>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex justify-between pt-4 border-t">
+                          <div className="text-sm text-muted-foreground">
+                            <p>Request ID: {selectedBorrowRequest.id}</p>
+                            <p>Created: {selectedBorrowRequest.created_at ? new Date(selectedBorrowRequest.created_at).toLocaleString() : 'N/A'}</p>
+                          </div>
+                          <div className="space-x-2">
+                            {selectedBorrowRequest.status === 'pending' && (
+                              <>
+                                <Button size="sm" onClick={() => { handleApproveBorrowRequest(selectedBorrowRequest.id); setBorrowRequestViewOpen(false); }} className="bg-green-600 hover:bg-green-700">
+                                  <CheckCircle className="w-4 h-4 mr-2" />
+                                  Approve
+                                </Button>
+                                <Button size="sm" variant="destructive" onClick={() => { handleRejectBorrowRequest(selectedBorrowRequest.id); setBorrowRequestViewOpen(false); }}>
+                                  <XCircle className="w-4 h-4 mr-2" />
+                                  Reject
+                                </Button>
+                              </>
+                            )}
+                            <Button size="sm" variant="outline" onClick={() => setBorrowRequestViewOpen(false)}>Close</Button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </DialogContent>
+                </Dialog>
+              </CardContent>
+            </Card>
+          )}
+          
             </TabsContent>
 
             <TabsContent value="waiting-list">
@@ -1142,6 +2436,69 @@ const Reservations = () => {
             </TabsContent>
           </Tabs>
         )}
+
+        <Dialog open={borrowDialogOpen} onOpenChange={setBorrowDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Borrow Item</DialogTitle>
+            </DialogHeader>
+            {borrowItem && (
+              <form onSubmit={handleBorrowSubmit} className="space-y-4">
+                <div>
+                  <div className="font-medium">{borrowItem.name}</div>
+                  <div className="text-sm text-muted-foreground">
+                    Available today: {getEffectiveAvailability(borrowItem)}
+                  </div>
+                </div>
+
+                <div>
+                  <Label htmlFor="borrow_quantity">Quantity</Label>
+                  <Input
+                    id="borrow_quantity"
+                    type="number"
+                    min={1}
+                    max={Math.max(1, getEffectiveAvailability(borrowItem))}
+                    value={borrowForm.quantity}
+                    onChange={(e) =>
+                      setBorrowForm({
+                        ...borrowForm,
+                        quantity: parseInt(e.target.value || '1', 10),
+                      })
+                    }
+                    required
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="borrow_return_date">Expected Return Date</Label>
+                  <Input
+                    id="borrow_return_date"
+                    type="date"
+                    value={borrowForm.return_date}
+                    onChange={(e) => setBorrowForm({ ...borrowForm, return_date: e.target.value })}
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="borrow_message">Message / Purpose</Label>
+                  <Textarea
+                    id="borrow_message"
+                    value={borrowForm.message}
+                    onChange={(e) => setBorrowForm({ ...borrowForm, message: e.target.value })}
+                    placeholder={`Why do you need ${borrowItem.name}?`}
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <Button type="button" variant="outline" onClick={() => setBorrowDialogOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit">Submit Request</Button>
+                </div>
+              </form>
+            )}
+          </DialogContent>
+        </Dialog>
 
         {/* Update Reservation Dialog */}
         <Dialog open={open} onOpenChange={setOpen}>
@@ -1503,6 +2860,77 @@ const Reservations = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Borrow Dialog for Available Inventory */}
+      <Dialog open={borrowDialogOpen} onOpenChange={setBorrowDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Borrow Equipment</DialogTitle>
+          </DialogHeader>
+          {borrowItem && (
+            <form onSubmit={handleBorrowSubmit} className="space-y-4">
+              <div className="space-y-1">
+                <Label className="text-sm font-medium text-gray-700">Item</Label>
+                <p className="text-sm text-gray-900">{borrowItem.name}</p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="borrow-quantity">Quantity</Label>
+                  <Input
+                    id="borrow-quantity"
+                    type="number"
+                    min={1}
+                    value={borrowForm.quantity}
+                    onChange={(e) => setBorrowForm({ ...borrowForm, quantity: Number(e.target.value) })}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="borrow-return-date">Expected Return Date</Label>
+                  <Input
+                    id="borrow-return-date"
+                    type="date"
+                    value={borrowForm.return_date}
+                    onChange={(e) => setBorrowForm({ ...borrowForm, return_date: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="borrow-message">Purpose / Message</Label>
+                <Textarea
+                  id="borrow-message"
+                  value={borrowForm.message}
+                  onChange={(e) => setBorrowForm({ ...borrowForm, message: e.target.value })}
+                  placeholder="Describe how you will use this equipment"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button type="button" variant="outline" onClick={() => setBorrowDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit">Submit Request</Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <DeleteConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        onConfirm={confirmDelete}
+        title="Confirm Deletion"
+        description="This action requires admin password verification."
+        itemName={
+          deleteType === 'borrowRequest' 
+            ? itemToDelete?.item 
+            : itemToDelete?.equipment_name || itemToDelete?.reservation_number
+        }
+        requirePassword={currentUser?.role === 'admin'}
+        currentUser={currentUser}
+      />
+
       </div>
     </div>
   );

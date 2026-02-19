@@ -1,6 +1,8 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/trash/TrashService.php';
+require_once __DIR__ . '/activity_log_helper.php';
 
 $conn = get_db_connection();
 $method = $_SERVER['REQUEST_METHOD'];
@@ -64,8 +66,8 @@ function handle_get(mysqli $conn): void {
         return;
     }
     
-    // For general users list, exclude the root admin account
-    $result = $conn->query("SELECT id, email, role, id_number, avatar_url, first_name, middle_name, last_name, created_at FROM users WHERE id != '6717' AND email != 'benjie.trozo@csucc.edu.ph' ORDER BY created_at DESC");
+    // For general users list, exclude the root admin account and soft-deleted users
+    $result = $conn->query("SELECT id, email, role, id_number, avatar_url, first_name, middle_name, last_name, created_at FROM users WHERE id != '6717' AND email != 'benjie.trozo@csucc.edu.ph' AND deleted_at IS NULL ORDER BY created_at DESC");
     if (!$result) {
         send_json(['success' => false, 'error' => $conn->error], 500);
     }
@@ -136,6 +138,14 @@ function handle_post(mysqli $conn): void {
         send_json(['success' => false, 'error' => $stmt->error], 500);
     }
 
+    // Log user creation
+    $user_name = trim(($first_name ?? '') . ' ' . ($last_name ?? ''));
+    logCreate('users', 'user', $id, $user_name ?: $email, [
+        'email' => $email,
+        'role' => $role,
+        'id_number' => $id_number
+    ]);
+
     // Convert back to frontend role format for response
     $frontend_role = ($role === 'user') ? 'student' : $role;
     send_json(['success' => true, 'user' => [
@@ -203,6 +213,15 @@ function handle_put(mysqli $conn): void {
         send_json(['success' => false, 'error' => 'Email already in use'], 400);
     }
 
+    // Get old values for logging
+    $old_sql = "SELECT * FROM users WHERE id = ?";
+    $old_stmt = $conn->prepare($old_sql);
+    $old_stmt->bind_param('s', $id);
+    $old_stmt->execute();
+    $old_result = $old_stmt->get_result();
+    $old_values = $old_result->fetch_assoc();
+    $old_stmt->close();
+
     // Build dynamic UPDATE query based on provided fields
     $update_fields = ['email = ?'];
     $bind_params = [$email];
@@ -257,15 +276,29 @@ function handle_put(mysqli $conn): void {
         send_json(['success' => false, 'error' => $stmt->error], 500);
     }
 
+    // Log user update
+    $user_name = trim(($first_name ?? $old_values['first_name'] ?? '') . ' ' . ($last_name ?? $old_values['last_name'] ?? ''));
+    logUpdate('users', 'user', $id, $user_name ?: $email, $old_values, $input);
+
     send_json(['success' => true]);
 }
 
 function handle_delete(mysqli $conn): void {
     parse_str($_SERVER['QUERY_STRING'] ?? '', $query);
     $id = $query['id'] ?? null;
+    $admin_id = $query['admin_id'] ?? null;
 
     if (!$id) {
         send_json(['success' => false, 'error' => 'Missing id'], 400);
+    }
+    
+    // If no admin ID provided, try to get the first admin user
+    if (!$admin_id) {
+        $userResult = $conn->query("SELECT id FROM users WHERE role='admin' LIMIT 1");
+        if ($userResult && $userResult->num_rows > 0) {
+            $user = $userResult->fetch_assoc();
+            $admin_id = $user['id'];
+        }
     }
 
     // Protect root admin from deletion
@@ -282,15 +315,32 @@ function handle_delete(mysqli $conn): void {
         send_json(['success' => false, 'error' => 'Cannot delete root admin account'], 400);
     }
 
-    $stmt = $conn->prepare('DELETE FROM users WHERE id = ?');
-    if (!$stmt) {
-        send_json(['success' => false, 'error' => $conn->error], 500);
-    }
-    $stmt->bind_param('s', $id);
+    // Get user details for logging
+    $user_sql = "SELECT first_name, last_name, email FROM users WHERE id = ?";
+    $user_stmt = $conn->prepare($user_sql);
+    $user_stmt->bind_param('s', $id);
+    $user_stmt->execute();
+    $user_result = $user_stmt->get_result();
+    $user_data = $user_result->fetch_assoc();
+    $user_stmt->close();
 
-    if (!$stmt->execute()) {
-        send_json(['success' => false, 'error' => $stmt->error], 500);
-    }
+    // Use soft delete instead of hard delete
+    $trashService = new TrashService($conn);
+    $result = $trashService->softDelete(
+        'user',
+        $id,
+        $admin_id ? (int)$admin_id : null,
+        'Users'
+    );
 
-    send_json(['success' => true]);
+    if ($result['success']) {
+        // Log user deletion
+        if ($user_data) {
+            $user_name = trim(($user_data['first_name'] ?? '') . ' ' . ($user_data['last_name'] ?? ''));
+            logDelete('users', 'user', $id, $user_name ?: $user_data['email']);
+        }
+        send_json(['success' => true, 'message' => 'User moved to trash. You can restore it from the Trash page.']);
+    } else {
+        send_json(['success' => false, 'error' => $result['error']], 500);
+    }
 }

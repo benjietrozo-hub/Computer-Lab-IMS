@@ -13,6 +13,7 @@ import { Plus, Pencil, Trash2, Download, Printer, Filter, Eye } from "lucide-rea
 import NavHeader from "@/components/NavHeader";
 import NotificationProfile from "@/components/NotificationProfile";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 
 const Inventory = () => {
   const navigate = useNavigate();
@@ -23,13 +24,10 @@ const Inventory = () => {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [viewingItem, setViewingItem] = useState<any>(null);
   const [viewOpen, setViewOpen] = useState(false);
-  const [borrowDialogOpen, setBorrowDialogOpen] = useState(false);
-  const [borrowItem, setBorrowItem] = useState<any>(null);
-  const [borrowForm, setBorrowForm] = useState({
-    quantity: 1,
-    return_date: "",
-    message: "",
-  });
+  const [borrowedCounts, setBorrowedCounts] = useState<Record<string, number>>({});
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<any>(null);
+  
   
   const storedUser = typeof window !== "undefined" ? localStorage.getItem("user") : null;
   const currentUser = storedUser ? JSON.parse(storedUser) : null;
@@ -84,6 +82,13 @@ const Inventory = () => {
   // Add a timeout to show content after 3 seconds even if still loading
   const [showContent, setShowContent] = useState(false);
   
+  // Redirect non-admin users away from Inventory (confidential)
+  useEffect(() => {
+    if (currentUser && !isAdmin) {
+      navigate('/reservations');
+    }
+  }, [currentUser, isAdmin, navigate]);
+
   useEffect(() => {
     const timer = setTimeout(() => {
       if (loading) {
@@ -145,8 +150,28 @@ const Inventory = () => {
     } finally {
       console.log('Setting loading to false');
       setLoading(false);
+      try {
+        const resp = await fetch('http://localhost/labmate/labmate-guardian/api/borrow_items.php');
+        const data = await resp.json();
+        if (resp.ok && data.success) {
+          const counts: Record<string, number> = {};
+          (data.data || []).forEach((bi: any) => {
+            if (bi.status === 'borrowed' && bi.item) {
+              const key = String(bi.item);
+              const qty = Number(bi.quantity) || 0;
+              counts[key] = (counts[key] || 0) + qty;
+            }
+          });
+          setBorrowedCounts(counts);
+        }
+      } catch {}
     }
   };
+
+  // Computed totals
+  const totalQuantity = Array.isArray(items)
+    ? items.reduce((sum, it: any) => sum + (parseInt(it?.quantity) || 0), 0)
+    : 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -201,11 +226,16 @@ const Inventory = () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this equipment?")) return;
+  const handleDelete = (item: any) => {
+    setItemToDelete(item);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!itemToDelete) return;
 
     try {
-      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/inventory_equipment.php?id=${id}`, {
+      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/inventory_equipment.php?id=${itemToDelete.id}`, {
         method: "DELETE",
       });
 
@@ -214,10 +244,11 @@ const Inventory = () => {
       if (!response.ok || !result.success) {
         throw new Error(result.error || "Failed to delete equipment");
       }
+
       toast.success("Equipment deleted successfully");
       fetchItems();
     } catch (error: any) {
-      toast.error("Failed to delete equipment");
+      throw new Error(error.message || "Failed to delete equipment");
     }
   };
 
@@ -225,6 +256,7 @@ const Inventory = () => {
     const printWindow = window.open('', '_blank');
     if (printWindow) {
       const currentDate = new Date().toLocaleDateString();
+      const totalQty = items.reduce((sum, it) => sum + (parseInt(it.quantity) || 0), 0);
       printWindow.document.write(`
         <html>
           <head>
@@ -246,6 +278,7 @@ const Inventory = () => {
               <h1>Inventory Equipment Report</h1>
               <p>Generated on ${currentDate}</p>
               <p>Total Items: ${items.length}</p>
+              <p>Total Quantity: ${totalQty}</p>
             </div>
             
             <table>
@@ -359,87 +392,6 @@ const Inventory = () => {
     setViewOpen(true);
   };
 
-  const handleBorrowClick = (item: any) => {
-    if (!currentUser) {
-      navigate("/login");
-      return;
-    }
-
-    setBorrowItem(item);
-    setBorrowForm({
-      quantity: 1,
-      return_date: "",
-      message: "",
-    });
-    setBorrowDialogOpen(true);
-  };
-
-  const handleBorrowSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!currentUser || !borrowItem) {
-      toast.error("User information not found");
-      return;
-    }
-
-    const quantity = parseInt(String(borrowForm.quantity), 10);
-
-    if (!quantity || quantity <= 0) {
-      toast.error("Please enter a valid quantity");
-      return;
-    }
-
-    const borrowerName =
-      `${currentUser.first_name || ""} ${currentUser.last_name || ""}`.trim() ||
-      currentUser.email;
-
-    const payload = {
-      borrower_name: borrowerName,
-      borrower_email: currentUser.email,
-      item: borrowItem.name,
-      quantity,
-      request_date: new Date().toISOString().split("T")[0],
-      return_date: borrowForm.return_date || null,
-      message: borrowForm.message,
-      created_by: currentUser.id,
-    };
-
-    try {
-      const response = await fetch(
-        "http://localhost/labmate/labmate-guardian/api/borrow_requests.php",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        }
-      );
-
-      const result = await response.json();
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.error || "Failed to submit borrow request");
-      }
-
-      if (result.status === "waiting") {
-        toast.success("Added to waiting list due to limited inventory");
-      } else {
-        toast.success("Borrow request submitted successfully");
-      }
-
-      setBorrowDialogOpen(false);
-      setBorrowItem(null);
-      setBorrowForm({
-        quantity: 1,
-        return_date: "",
-        message: "",
-      });
-    } catch (error: any) {
-      toast.error(error.message || "Failed to submit borrow request");
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gray-50">
       <NavHeader 
@@ -548,7 +500,7 @@ const Inventory = () => {
           </div>
         </div>
 
-        <div className="flex justify-between items-center mb-4">
+        <div className="flex justify-between items-center mb-2">
           <div className="flex gap-2">
             <Button
               variant="outline"
@@ -572,8 +524,8 @@ const Inventory = () => {
               <DialogTrigger asChild>
                 <Button>
                   <Plus className="w-4 h-4 mr-2" />
-                  Add Equipment
-                </Button>
+                  Add Inventory
+               </Button>
               </DialogTrigger>
               <DialogContent className="max-w-2xl">
                 <DialogHeader>
@@ -706,6 +658,10 @@ const Inventory = () => {
           </Dialog>
           )}
       </div>
+      <div className="flex justify-between items-center mb-4 text-sm text-muted-foreground">
+        <span>Items: {items.length}</span>
+        <span>Total Quantity: {totalQuantity}</span>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {loading ? (
@@ -765,7 +721,7 @@ const Inventory = () => {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => handleDelete(item.id)}
+                        onClick={() => handleDelete(item)}
                         className="h-8 w-8 p-0 text-destructive hover:text-destructive"
                       >
                         <Trash2 className="w-3 h-3" />
@@ -784,6 +740,10 @@ const Inventory = () => {
                   <div>
                     <span className="font-medium text-gray-700">Quantity:</span>
                     <span className="ml-1 text-gray-600">{item.quantity}</span>
+                  </div>
+                  <div>
+                    <span className="font-medium text-gray-700">Borrowed:</span>
+                    <span className="ml-1 text-gray-600">{borrowedCounts[item.name] || 0}</span>
                   </div>
                   <div>
                     <span className="font-medium text-gray-700">Price:</span>
@@ -809,11 +769,7 @@ const Inventory = () => {
                 <div className="text-xs text-gray-500 pt-2 border-t">
                   Added: {new Date(item.date).toLocaleDateString()}
                 </div>
-                <div className="mt-3 flex justify-end">
-                  <Button size="sm" onClick={() => handleBorrowClick(item)}>
-                    Borrow
-                  </Button>
-                </div>
+                
               </div>
             </div>
           ))
@@ -890,77 +846,18 @@ const Inventory = () => {
           )}
         </DialogContent>
       </Dialog>
-      <Dialog open={borrowDialogOpen} onOpenChange={setBorrowDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Borrow Equipment</DialogTitle>
-          </DialogHeader>
-          {borrowItem && (
-            <form onSubmit={handleBorrowSubmit} className="space-y-4">
-              <div className="space-y-1">
-                <Label className="text-sm font-medium text-gray-700">Item</Label>
-                <p className="text-sm text-gray-900">{borrowItem.name}</p>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="borrow-quantity">Quantity</Label>
-                  <Input
-                    id="borrow-quantity"
-                    type="number"
-                    min={1}
-                    value={borrowForm.quantity}
-                    onChange={(e) =>
-                      setBorrowForm({
-                        ...borrowForm,
-                        quantity: Number(e.target.value),
-                      })
-                    }
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="borrow-return-date">Expected Return Date</Label>
-                  <Input
-                    id="borrow-return-date"
-                    type="date"
-                    value={borrowForm.return_date}
-                    onChange={(e) =>
-                      setBorrowForm({
-                        ...borrowForm,
-                        return_date: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="borrow-message">Purpose / Message</Label>
-                <Textarea
-                  id="borrow-message"
-                  value={borrowForm.message}
-                  onChange={(e) =>
-                    setBorrowForm({
-                      ...borrowForm,
-                      message: e.target.value,
-                    })
-                  }
-                  placeholder="Describe how you will use this equipment"
-                />
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setBorrowDialogOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit">Submit Request</Button>
-              </div>
-            </form>
-          )}
-        </DialogContent>
-      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <DeleteConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        onConfirm={confirmDelete}
+        title="Confirm Deletion"
+        description="This action requires admin password verification."
+        itemName={itemToDelete?.name}
+        requirePassword={currentUser?.role === 'admin'}
+        currentUser={currentUser}
+      />
           </>
         )}
       </div>

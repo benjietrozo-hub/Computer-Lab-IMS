@@ -1,6 +1,8 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/trash/TrashService.php';
+require_once __DIR__ . '/activity_log_helper.php';
 
 // Get user from request header (simplified approach)
 $headers = getallheaders();
@@ -36,7 +38,8 @@ switch ($method) {
 }
 
 function handle_get(mysqli $conn): void {
-    $result = $conn->query('SELECT * FROM incident_reports ORDER BY created_at DESC');
+    // Filter out soft-deleted items
+    $result = $conn->query('SELECT * FROM incident_reports WHERE deleted_at IS NULL ORDER BY created_at DESC');
     if (!$result) {
         send_json(['success' => false, 'error' => $conn->error], 500);
     }
@@ -81,6 +84,13 @@ function handle_post(mysqli $conn): void {
     $stmt->bind_param('ssssssssssss', $id, $name, $title, $description, $incident_type, $severity, $location, $reported_by, $hardware_type, $hardware_damage, $timestamp, $date_occurred);
 
     if ($stmt->execute()) {
+        // Log incident report creation
+        logCreate('incident_reports', 'incident_report', $id, $name, [
+            'incident_type' => $incident_type,
+            'severity' => $severity,
+            'location' => $location
+        ]);
+        
         // Send notifications to admins about new incident report
         send_incident_notification_to_admins($id, $name, $incident_type, $severity, $location, $reported_by, $hardware_type, $hardware_damage);
         
@@ -156,6 +166,9 @@ function handle_put(mysqli $conn): void {
     $stmt->bind_param('ssssssssssss', $name, $title, $description, $incident_type, $severity, $location, $reported_by, $hardware_type, $hardware_damage, $timestamp, $date_occurred, $id);
 
     if ($stmt->execute()) {
+        // Log incident report update
+        logUpdate('incident_reports', 'incident_report', $id, $name, null, $input);
+        
         send_json(['success' => true]);
     } else {
         send_json(['success' => false, 'error' => $stmt->error], 500);
@@ -201,19 +214,23 @@ function handle_delete(mysqli $conn): void {
         return;
     }
 
-    $sql = "DELETE FROM incident_reports WHERE id=?";
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        send_json(['success' => false, 'error' => $conn->error], 500);
-        return;
-    }
+    // Use soft delete instead of hard delete
+    $trashService = new TrashService($conn);
+    $result = $trashService->softDelete(
+        'incident_report',
+        $id,
+        $current_user_id,
+        'Incident Reports'
+    );
 
-    $stmt->bind_param('s', $id);
-
-    if ($stmt->execute()) {
-        send_json(['success' => true]);
+    if ($result['success']) {
+        // Log incident report deletion
+        if ($incident) {
+            logDelete('incident_reports', 'incident_report', $id, $incident['reported_by']);
+        }
+        send_json(['success' => true, 'message' => 'Incident report moved to trash. You can restore it from the Trash page.']);
     } else {
-        send_json(['success' => false, 'error' => $stmt->error], 500);
+        send_json(['success' => false, 'error' => $result['error']], 500);
     }
 }
 

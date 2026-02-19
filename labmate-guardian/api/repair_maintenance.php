@@ -1,7 +1,8 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
-require_once __DIR__ . '/activity_logger.php';
+require_once __DIR__ . '/trash/TrashService.php';
+require_once __DIR__ . '/activity_log_helper.php';
 
 // Set CORS headers
 header("Access-Control-Allow-Origin: *");
@@ -37,7 +38,7 @@ switch ($method) {
 }
 
 function handle_get(mysqli $conn): void {
-    $result = $conn->query('SELECT * FROM repair_maintenance ORDER BY created_at DESC');
+    $result = $conn->query('SELECT * FROM repair_maintenance WHERE deleted_at IS NULL ORDER BY created_at DESC');
     if (!$result) {
         send_json(['success' => false, 'error' => $conn->error], 500);
     }
@@ -76,20 +77,11 @@ function handle_post(mysqli $conn): void {
 
     $repair_id = $stmt->insert_id;
 
-    // Log activity
-    $admin = get_admin_from_token($conn, '');
-    if ($admin) {
-        log_activity($conn, [
-            'admin_id' => $admin['id'],
-            'admin_email' => $admin['email'],
-            'admin_name' => $admin['name'],
-            'action' => 'CREATE',
-            'table_name' => 'repair_maintenance',
-            'record_id' => $repair_id,
-            'record_description' => "Added new repair record for: $equipment_name (Status: $status)",
-            'new_values' => $input
-        ]);
-    }
+    // Log repair creation
+    logCreate('repair_maintenance', 'repair_maintenance', $repair_id, $equipment_name, [
+        'status' => $status,
+        'issue_description' => $issue_description
+    ]);
 
     send_json(['success' => true], 201);
 }
@@ -191,25 +183,12 @@ function handle_put(mysqli $conn): void {
             send_json(['success' => false, 'error' => $stmt->error], 500);
         }
 
-        $admin = get_admin_from_token($conn, '');
-        if ($admin) {
-            $action_desc = "Updated repair record for: $equipment_name";
-            if ($status === 'Completed' && $old_values['status'] !== 'Completed') {
-                $action_desc .= " (MARKED AS COMPLETED)";
-            }
-            
-            log_activity($conn, [
-                'admin_id' => $admin['id'],
-                'admin_email' => $admin['email'],
-                'admin_name' => $admin['name'],
-                'action' => 'UPDATE',
-                'table_name' => 'repair_maintenance',
-                'record_id' => $id,
-                'record_description' => $action_desc,
-                'old_values' => $old_values,
-                'new_values' => $input
-            ]);
+        // Log repair update
+        $action_desc = "Updated repair record for: $equipment_name";
+        if ($status === 'Completed' && $old_values['status'] !== 'Completed') {
+            $action_desc .= " (MARKED AS COMPLETED)";
         }
+        logUpdate('repair_maintenance', 'repair_maintenance', $id, $equipment_name, $old_values, $input);
 
         send_json(['success' => true]);
     } catch (\Throwable $e) {
@@ -225,17 +204,39 @@ function handle_delete(mysqli $conn): void {
         send_json(['success' => false, 'error' => 'Missing id'], 400);
     }
 
-    $sql = "DELETE FROM repair_maintenance WHERE id=?";
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        send_json(['success' => false, 'error' => $conn->error], 500);
+    // Get current user from session/headers
+    $headers = getallheaders();
+    $userId = $headers['X-User-Id'] ?? null;
+    
+    // If no user ID provided, try to get the first admin user
+    if (!$userId) {
+        $userResult = $conn->query("SELECT id FROM users WHERE role='admin' LIMIT 1");
+        if ($userResult && $userResult->num_rows > 0) {
+            $user = $userResult->fetch_assoc();
+            $userId = $user['id'];
+        }
     }
 
-    $stmt->bind_param('s', $id);
-
-    if (!$stmt->execute()) {
-        send_json(['success' => false, 'error' => $stmt->error], 500);
+    // Use TrashService for soft delete
+    try {
+        $trashService = new TrashService($conn);
+        $result = $trashService->softDelete(
+            'repair_maintenance',
+            $id,
+            $userId ? (int)$userId : null,
+            'Repair & Maintenance'
+        );
+        
+        if ($result['success']) {
+            // Log repair deletion
+            logDelete('repair_maintenance', 'repair_maintenance', $id, 'Repair record');
+            
+            send_json(['success' => true, 'message' => 'Repair record moved to trash. You can restore it from the Trash page.']);
+        } else {
+            send_json(['success' => false, 'error' => $result['error']], 500);
+        }
+    } catch (Exception $e) {
+        error_log("Exception in repair_maintenance delete: " . $e->getMessage());
+        send_json(['success' => false, 'error' => 'Failed to delete repair record'], 500);
     }
-
-    send_json(['success' => true]);
 }

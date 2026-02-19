@@ -1,7 +1,8 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
-require_once __DIR__ . '/activity_logger.php';
+require_once __DIR__ . '/trash/TrashService.php';
+require_once __DIR__ . '/activity_log_helper.php';
 
 // Set CORS headers
 header("Access-Control-Allow-Origin: *");
@@ -41,7 +42,7 @@ function handle_get(mysqli $conn): void {
     $search = $_GET['search'] ?? null;
     $assigned_to = $_GET['assigned_to'] ?? null;
     
-    $sql = "SELECT * FROM inventory_equipment WHERE 1=1";
+    $sql = "SELECT * FROM inventory_equipment WHERE deleted_at IS NULL AND 1=1";
     $params = [];
     $types = "";
     
@@ -120,20 +121,12 @@ function handle_post(mysqli $conn): void {
         send_json(['success' => false, 'error' => $stmt->error], 500);
     }
 
-    // Log activity
-    $admin = get_admin_from_token($conn, '');
-    if ($admin) {
-        log_activity($conn, [
-            'admin_id' => $admin['id'],
-            'admin_email' => $admin['email'],
-            'admin_name' => $admin['name'],
-            'action' => 'CREATE',
-            'table_name' => 'inventory_equipment',
-            'record_id' => $id,
-            'record_description' => "Added new equipment: $name (Category: $category, Quantity: $quantity)",
-            'new_values' => $input
-        ]);
-    }
+    // Log inventory creation
+    logCreate('inventory', 'inventory', $id, $name, [
+        'category' => $category,
+        'quantity' => $quantity,
+        'price' => $price
+    ]);
 
     send_json(['success' => true, 'id' => $id], 201);
 }
@@ -186,21 +179,8 @@ function handle_put(mysqli $conn): void {
         send_json(['success' => false, 'error' => $stmt->error], 500);
     }
 
-    // Log activity
-    $admin = get_admin_from_token($conn, '');
-    if ($admin) {
-        log_activity($conn, [
-            'admin_id' => $admin['id'],
-            'admin_email' => $admin['email'],
-            'admin_name' => $admin['name'],
-            'action' => 'UPDATE',
-            'table_name' => 'inventory_equipment',
-            'record_id' => $id,
-            'record_description' => "Updated equipment: $name (Category: $category, Quantity: $quantity)",
-            'old_values' => $old_values,
-            'new_values' => $input
-        ]);
-    }
+    // Log inventory update
+    logUpdate('inventory', 'inventory', $id, $name, $old_values, $input);
 
     send_json(['success' => true]);
 }
@@ -208,9 +188,19 @@ function handle_put(mysqli $conn): void {
 function handle_delete(mysqli $conn): void {
     parse_str($_SERVER['QUERY_STRING'] ?? '', $query);
     $id = $query['id'] ?? null;
+    $admin_id = $query['admin_id'] ?? null;
 
     if (!$id) {
         send_json(['success' => false, 'error' => 'Missing id'], 400);
+    }
+    
+    // If no admin ID provided, try to get the first admin user
+    if (!$admin_id) {
+        $userResult = $conn->query("SELECT id FROM users WHERE role='admin' LIMIT 1");
+        if ($userResult && $userResult->num_rows > 0) {
+            $user = $userResult->fetch_assoc();
+            $admin_id = $user['id'];
+        }
     }
 
     // Get old values for logging
@@ -226,34 +216,21 @@ function handle_delete(mysqli $conn): void {
         send_json(['success' => false, 'error' => 'Record not found'], 404);
     }
 
-    $id = $conn->real_escape_string($id);
-    $sql = "DELETE FROM inventory_equipment WHERE id = ?";
+    // Use soft delete instead of hard delete
+    $trashService = new TrashService($conn);
+    $result = $trashService->softDelete(
+        'inventory',
+        $id,
+        $admin_id ? (int)$admin_id : null,
+        'Inventory'
+    );
 
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        send_json(['success' => false, 'error' => $conn->error], 500);
+    if ($result['success']) {
+        // Log inventory deletion
+        logDelete('inventory', 'inventory', $id, $old_values['name']);
+        
+        send_json(['success' => true, 'message' => 'Equipment moved to trash. You can restore it from the Trash page.']);
+    } else {
+        send_json(['success' => false, 'error' => $result['error']], 500);
     }
-
-    $stmt->bind_param('s', $id);
-
-    if (!$stmt->execute()) {
-        send_json(['success' => false, 'error' => $stmt->error], 500);
-    }
-
-    // Log activity
-    $admin = get_admin_from_token($conn, '');
-    if ($admin) {
-        log_activity($conn, [
-            'admin_id' => $admin['id'],
-            'admin_email' => $admin['email'],
-            'admin_name' => $admin['name'],
-            'action' => 'DELETE',
-            'table_name' => 'inventory_equipment',
-            'record_id' => $id,
-            'record_description' => "Deleted equipment: {$old_values['name']} (Category: {$old_values['category']}, Quantity: {$old_values['quantity']})",
-            'old_values' => $old_values
-        ]);
-    }
-
-    send_json(['success' => true]);
 }

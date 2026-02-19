@@ -31,10 +31,10 @@ const commonModules = [
 
 const adminModules = [
   {
-    title: "Borrow Requests",
-    description: "Manage equipment borrowing requests",
+    title: "Equipment Reservations",
+    description: "Manage equipment reservations",
     icon: ClipboardList,
-    url: "/borrow-requests",
+    url: "/reservations",
     color: "from-green-500 to-emerald-500",
   },
   {

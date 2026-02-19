@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>End-to-End Activity Log Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; max-width: 1200px; margin: 0 auto; }
+        .section { background: #f5f5f5; padding: 15px; margin: 15px 0; border-radius: 5px; }
+        .log { background: white; padding: 10px; margin: 10px 0; border-left: 4px solid #4CAF50; }
+        .error { border-left-color: #f44336; }
+        .success { color: green; }
+        .info { color: blue; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        #logs { max-height: 400px; overflow-y: auto; }
+        .status { padding: 5px 10px; border-radius: 3px; display: inline-block; margin: 5px; }
+        .connected { background: #4CAF50; color: white; }
+        .disconnected { background: #f44336; color: white; }
+    </style>
+</head>
+<body>
+    <h1>End-to-End Activity Log Test</h1>
+    
+    <div class="section">
+        <h2>Step 1: WebSocket Connection</h2>
+        <div>
+            <label>User ID: <input type="number" id="userId" value="6717" /></label>
+            <label>Role: <input type="text" id="role" value="admin" /></label>
+            <button onclick="connectWebSocket()">Connect WebSocket</button>
+            <button onclick="disconnectWebSocket()">Disconnect</button>
+        </div>
+        <div>Status: <span id="wsStatus" class="status disconnected">Disconnected</span></div>
+    </div>
+
+    <div class="section">
+        <h2>Step 2: Trigger Activity</h2>
+        <p>These buttons will create real activity logs that should appear in real-time:</p>
+        <button onclick="testLogin()">Test Login</button>
+        <button onclick="testCreate()">Test Create</button>
+        <button onclick="testUpdate()">Test Update</button>
+        <button onclick="testDelete()">Test Delete</button>
+    </div>
+
+    <div class="section">
+        <h2>Step 3: Real-Time Logs</h2>
+        <div id="logs"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let logCount = 0;
+
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `log ${type}`;
+            div.innerHTML = `<strong>[${new Date().toLocaleTimeString()}]</strong> ${message}`;
+            document.getElementById('logs').prepend(div);
+        }
+
+        function connectWebSocket() {
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                log('Already connected or connecting', 'error');
+                return;
+            }
+
+            const userId = document.getElementById('userId').value;
+            const role = document.getElementById('role').value;
+
+            log(`Connecting to WebSocket as user ${userId} (${role})...`, 'info');
+            document.getElementById('wsStatus').textContent = 'Connecting...';
+            document.getElementById('wsStatus').className = 'status';
+
+            ws = new WebSocket('ws://localhost:8082');
+
+            ws.onopen = () => {
+                log('✅ WebSocket connected!', 'success');
+                document.getElementById('wsStatus').textContent = 'Connected';
+                document.getElementById('wsStatus').className = 'status connected';
+                
+                const identifyMessage = {
+                    type: 'identify',
+                    userId: userId,
+                    role: role
+                };
+                log(`Sending identify message: ${JSON.stringify(identifyMessage)}`, 'info');
+                ws.send(JSON.stringify(identifyMessage));
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    
+                    if (message.type === 'identified') {
+                        log(`✅ Server confirmed identification`, 'success');
+                    } else if (message.type === 'activity_log') {
+                        logCount++;
+                        const payload = message.payload;
+                        log(`
+                            <strong>🎯 ACTIVITY LOG #${logCount}</strong><br>
+                            <strong>ID:</strong> ${payload.id}<br>
+                            <strong>Action:</strong> ${payload.action}<br>
+                            <strong>Module:</strong> ${payload.module}<br>
+                            <strong>User:</strong> ${payload.user_name} (${payload.user_email})<br>
+                            <strong>Description:</strong> ${payload.description}<br>
+                            <strong>Severity:</strong> ${payload.severity}<br>
+                            <strong>Device:</strong> ${payload.device_type} | ${payload.browser} | ${payload.os}<br>
+                            <strong>IP:</strong> ${payload.ip_address}<br>
+                            <strong>Time:</strong> ${payload.created_at}
+                        `, 'success');
+                    } else {
+                        log(`Received: ${JSON.stringify(message)}`, 'info');
+                    }
+                } catch (error) {
+                    log(`Error parsing message: ${error.message}`, 'error');
+                }
+            };
+
+            ws.onerror = (error) => {
+                log(`❌ WebSocket error`, 'error');
+                document.getElementById('wsStatus').textContent = 'Error';
+                document.getElementById('wsStatus').className = 'status disconnected';
+            };
+
+            ws.onclose = () => {
+                log('🔌 WebSocket disconnected', 'info');
+                document.getElementById('wsStatus').textContent = 'Disconnected';
+                document.getElementById('wsStatus').className = 'status disconnected';
+            };
+        }
+
+        function disconnectWebSocket() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        async function testLogin() {
+            log('Creating test login activity...', 'info');
+            try {
+                const response = await fetch('http://localhost/labmate/labmate-guardian/test-real-activity-log.php');
+                const text = await response.text();
+                log(`Response: ${text}`, 'info');
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testCreate() {
+            log('Testing create activity via API...', 'info');
+            log('You can manually create an item in the Inventory page to test', 'info');
+        }
+
+        async function testUpdate() {
+            log('Testing update activity via API...', 'info');
+            log('You can manually update an item in the Inventory page to test', 'info');
+        }
+
+        async function testDelete() {
+            log('Testing delete activity via API...', 'info');
+            log('You can manually delete an item in the Inventory page to test', 'info');
+        }
+
+        // Auto-connect on load
+        window.onload = () => {
+            log('Page loaded. Click "Connect WebSocket" to start.', 'info');
+        };
+    </script>
+</body>
+</html>

@@ -12,6 +12,7 @@ import { Eye, EyeOff } from "lucide-react";
 import NavHeader from "@/components/NavHeader";
 import NotificationProfile from "@/components/NotificationProfile";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 
 
 
@@ -79,6 +80,8 @@ const Users = () => {
   const [open, setOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<User | null>(null);
   
   const storedUser = typeof window !== "undefined" ? localStorage.getItem("user") : null;
   const currentUser = storedUser ? JSON.parse(storedUser) : null;
@@ -350,11 +353,16 @@ const Users = () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this user?")) return;
+  const handleDelete = (user: User) => {
+    setItemToDelete(user);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!itemToDelete) return;
 
     try {
-      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/users.php?id=${id}`, {
+      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/users.php?id=${itemToDelete.id}`, {
         method: "DELETE",
       });
 
@@ -367,7 +375,7 @@ const Users = () => {
       toast.success("User deleted successfully");
       fetchUsers();
     } catch (error: any) {
-      toast.error(error.message || "Failed to delete user");
+      throw new Error(error.message || "Failed to delete user");
     }
   };
 
@@ -750,7 +758,7 @@ const Users = () => {
                       <Button
                         variant="destructive"
                         size="sm"
-                        onClick={() => handleDelete(String(user.id))}
+                        onClick={() => handleDelete(user)}
                       >
                         Delete
                       </Button>
@@ -852,6 +860,18 @@ const Users = () => {
             </form>
           </DialogContent>
         </Dialog>
+
+        {/* Delete Confirmation Dialog */}
+        <DeleteConfirmDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          onConfirm={confirmDelete}
+          title="Confirm Deletion"
+          description="This action requires admin password verification."
+          itemName={itemToDelete ? `${itemToDelete.first_name} ${itemToDelete.last_name} (${itemToDelete.email})` : undefined}
+          requirePassword={currentUser?.role === 'admin'}
+          currentUser={currentUser}
+        />
       </div>
     </div>
   );

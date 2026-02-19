@@ -270,7 +270,7 @@ const Profile = () => {
       };
 
       // Only include name fields if user is admin
-      if (loggedInUser?.role === "admin") {
+      if (currentUser?.role === "admin") {
         updateData.first_name = formData.first_name;
         updateData.middle_name = formData.middle_name;
         updateData.last_name = formData.last_name;
@@ -510,7 +510,7 @@ const Profile = () => {
           <div className="space-y-4">
             <Label className="text-base font-medium">Full Name</Label>
             <p className="text-xs text-muted-foreground">
-              {loggedInUser?.role === "admin" 
+              {currentUser?.role === "admin" 
                 ? "Edit name fields below" 
                 : "Contact an administrator to update your name information"
               }
@@ -518,7 +518,7 @@ const Profile = () => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="first_name">First Name</Label>
-                {isEditing && loggedInUser?.role === "admin" ? (
+                {isEditing && currentUser?.role === "admin" ? (
                   <Input
                     id="first_name"
                     type="text"
@@ -539,7 +539,7 @@ const Profile = () => {
               
               <div className="space-y-2">
                 <Label htmlFor="middle_name">Middle Name</Label>
-                {isEditing && loggedInUser?.role === "admin" ? (
+                {isEditing && currentUser?.role === "admin" ? (
                   <Input
                     id="middle_name"
                     type="text"
@@ -560,7 +560,7 @@ const Profile = () => {
               
               <div className="space-y-2">
                 <Label htmlFor="last_name">Last Name</Label>
-                {isEditing && loggedInUser?.role === "admin" ? (
+                {isEditing && currentUser?.role === "admin" ? (
                   <Input
                     id="last_name"
                     type="text"

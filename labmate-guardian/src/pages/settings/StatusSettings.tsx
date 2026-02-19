@@ -162,6 +162,12 @@ export default function StatusSettings() {
 
   const handleDelete = async (id: number) => {
     if (window.confirm("Are you sure you want to delete this status?")) {
+      const storedUser = typeof window !== 'undefined' ? localStorage.getItem('user') : null;
+      const current = storedUser ? JSON.parse(storedUser) : null;
+      if (current?.role === 'admin') {
+        const adminPassword = prompt('Enter admin password to confirm delete:');
+        if (!adminPassword) return;
+      }
       try {
         setStatuses(prev => prev.filter(status => status.id !== id));
         toast.success("Status deleted successfully");

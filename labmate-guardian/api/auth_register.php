@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/activity_log_helper.php';
 
 $conn = get_db_connection();
 
@@ -38,6 +39,9 @@ $stmt->bind_param('sss', $id, $email, $hash);
 if (!$stmt->execute()) {
     send_json(['success' => false, 'error' => $stmt->error], 500);
 }
+
+// Log user registration
+logCreate('authentication', 'user', $id, $email, ['email' => $email, 'role' => 'user']);
 
 send_json([
     'success' => true,

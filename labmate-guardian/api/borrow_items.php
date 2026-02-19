@@ -1,6 +1,8 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/trash/TrashService.php';
+require_once __DIR__ . '/activity_log_helper.php';
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
 header("Access-Control-Allow-Origin: $origin");
@@ -10,6 +12,105 @@ header("Access-Control-Allow-Headers: Content-Type, Authorization");
 $method = $_SERVER['REQUEST_METHOD'];
 if ($method === 'OPTIONS') {
     send_json(['success' => true]);
+}
+
+function process_reservation_waiting_list(mysqli $conn, $equipment_id) {
+    $waiting_sql = "SELECT * FROM reservation_waiting_list WHERE equipment_id = ? AND status = 'waiting' ORDER BY priority DESC, created_at ASC";
+    $stmt = $conn->prepare($waiting_sql);
+    if (!$stmt) {
+        return;
+    }
+    $stmt->bind_param('s', $equipment_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    while ($entry = $result->fetch_assoc()) {
+        if (check_reservation_slot_available($conn, $equipment_id, $entry['preferred_date'], $entry['preferred_start_time'], $entry['preferred_end_time'], (int)$entry['quantity_needed'])) {
+            create_reservation_from_waiting_entry($conn, $entry);
+        }
+    }
+    $stmt->close();
+}
+
+function check_reservation_slot_available(mysqli $conn, $equipment_id, $date, $start_time, $end_time, $quantity) {
+    $eq_sql = "SELECT quantity FROM inventory_equipment WHERE id = ?";
+    $eq_stmt = $conn->prepare($eq_sql);
+    if (!$eq_stmt) return false;
+    $eq_stmt->bind_param('s', $equipment_id);
+    $eq_stmt->execute();
+    $eq_res = $eq_stmt->get_result();
+    $equipment = $eq_res->fetch_assoc();
+    $eq_stmt->close();
+    if (!$equipment) return false;
+
+    $res_sql = "SELECT COALESCE(SUM(quantity_reserved),0) AS total_reserved FROM equipment_reservations 
+                WHERE equipment_id = ? AND reservation_date = ? AND status = 'approved'
+                AND ((start_time < ? AND end_time > ?) OR (start_time < ? AND end_time > ?) OR (start_time >= ? AND end_time <= ?))";
+    $res_stmt = $conn->prepare($res_sql);
+    if (!$res_stmt) return false;
+    $res_stmt->bind_param('ssssssss', $equipment_id, $date, $start_time, $start_time, $end_time, $end_time, $start_time, $end_time);
+    $res_stmt->execute();
+    $res = $res_stmt->get_result();
+    $row = $res->fetch_assoc();
+    $res_stmt->close();
+    $total_reserved = (int)($row['total_reserved'] ?? 0);
+    return ($total_reserved + $quantity) <= (int)$equipment['quantity'];
+}
+
+function create_reservation_from_waiting_entry(mysqli $conn, $entry) {
+    $user_id = $entry['user_id'];
+    $equipment_id = $entry['equipment_id'];
+    $quantity = (int)$entry['quantity_needed'];
+    $date = $entry['preferred_date'];
+    $start_time = $entry['preferred_start_time'] ?: '09:00';
+    $end_time = $entry['preferred_end_time'] ?: '11:00';
+    $purpose = $entry['purpose'] ?: null;
+
+    $role = 'student';
+    $u_stmt = $conn->prepare("SELECT role FROM users WHERE id = ?");
+    if ($u_stmt) {
+        $u_stmt->bind_param('s', $user_id);
+        $u_stmt->execute();
+        $u_res = $u_stmt->get_result();
+        if ($u_row = $u_res->fetch_assoc()) {
+            $role = $u_row['role'] ?: 'student';
+        }
+        $u_stmt->close();
+    }
+
+    $user_type = 'student';
+    if ($role === 'instructor' || $role === 'teacher') $user_type = 'faculty';
+    elseif ($role === 'admin') $user_type = 'staff';
+
+    $id = generate_uuid();
+    $reservation_number = 'AUTO-' . date('Y') . '-' . substr(strtoupper(bin2hex(random_bytes(2))), 0, 4);
+
+    $ins_sql = "INSERT INTO equipment_reservations (id, reservation_number, equipment_id, user_id, reservation_date, start_time, end_time, quantity_reserved, purpose, user_type, status, created_at) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', NOW())";
+    $ins_stmt = $conn->prepare($ins_sql);
+    if ($ins_stmt) {
+        $ins_stmt->bind_param('sssssssiss', $id, $reservation_number, $equipment_id, $user_id, $date, $start_time, $end_time, $quantity, $purpose, $user_type);
+        if ($ins_stmt->execute()) {
+            $upd_w_sql = "UPDATE reservation_waiting_list SET status='fulfilled', fulfilled_at = NOW() WHERE id = ?";
+            $upd_w_stmt = $conn->prepare($upd_w_sql);
+            if ($upd_w_stmt) {
+                $upd_w_stmt->bind_param('s', $entry['id']);
+                $upd_w_stmt->execute();
+                $upd_w_stmt->close();
+            }
+
+            $notif = [
+                'type' => 'reservation_waiting_fulfilled',
+                'reservation_id' => $id,
+                'equipment_id' => $equipment_id,
+                'quantity' => $quantity,
+                'title' => 'Reservation Created From Waiting List',
+                'message' => 'Your waiting list request has been fulfilled and a reservation has been created.',
+                'actionUrl' => '/reservations'
+            ];
+            send_websocket_notification($user_id, $notif);
+        }
+        $ins_stmt->close();
+    }
 }
 
 $conn = get_db_connection();
@@ -32,7 +133,7 @@ switch ($method) {
 }
 
 function handle_get(mysqli $conn): void {
-    $result = $conn->query('SELECT * FROM borrow_items ORDER BY created_at DESC');
+    $result = $conn->query('SELECT * FROM borrow_items WHERE deleted_at IS NULL ORDER BY created_at DESC');
     if (!$result) {
         send_json(['success' => false, 'error' => $conn->error], 500);
     }
@@ -69,6 +170,13 @@ function handle_post(mysqli $conn): void {
     if (!$stmt->execute()) {
         send_json(['success' => false, 'error' => $stmt->error], 500);
     }
+
+    // Log borrow item creation
+    logCreate('borrow_items', 'borrow_item', $id, $borrower_name . ' - ' . $item, [
+        'item' => $item,
+        'quantity' => $quantity,
+        'status' => $status
+    ]);
 
     // Send notification to admins about new borrow request
     send_admin_notification($conn, $borrower_name, $item, $quantity, $id);
@@ -115,13 +223,12 @@ function handle_put(mysqli $conn): void {
 
     // Only process return workflow if status is changing to 'returned'
     if ($status === 'returned' && $current_record['status'] !== 'returned') {
-        // Verify admin password for return confirmation
-        $admin_password = $input['admin_password'] ?? null;
-        if (!$admin_password) {
-            send_json(['success' => false, 'error' => 'Admin password required for return confirmation'], 400);
+        // Verify admin user exists (but don't require password)
+        if (!$admin_id) {
+            send_json(['success' => false, 'error' => 'Admin ID is required'], 400);
         }
         
-        $admin_sql = "SELECT password_hash FROM users WHERE id = ? AND role IN ('admin', 'staff')";
+        $admin_sql = "SELECT id FROM users WHERE id = ? AND role IN ('admin', 'staff')";
         $admin_stmt = $conn->prepare($admin_sql);
         $admin_stmt->bind_param('s', $admin_id);
         $admin_stmt->execute();
@@ -129,8 +236,8 @@ function handle_put(mysqli $conn): void {
         $admin_user = $admin_result->fetch_assoc();
         $admin_stmt->close();
         
-        if (!$admin_user || !password_verify($admin_password, $admin_user['password_hash'])) {
-            send_json(['success' => false, 'error' => 'Invalid admin password'], 401);
+        if (!$admin_user) {
+            send_json(['success' => false, 'error' => 'Invalid admin user'], 401);
         }
         
         $conn->begin_transaction();
@@ -164,6 +271,12 @@ function handle_put(mysqli $conn): void {
             // Step 4: Send notifications
             send_return_notifications($conn, $current_record, $return_condition, $return_comments);
             
+            // Step 5: Log borrow item update (return)
+            logUpdate('borrow_items', 'borrow_item', $id, $current_record['borrower_name'] . ' - ' . $current_record['item'], 
+                ['status' => $current_record['status']], 
+                ['status' => 'returned', 'return_condition' => $return_condition]
+            );
+            
             $conn->commit();
             send_json(['success' => true, 'message' => 'Item returned successfully']);
             
@@ -177,6 +290,13 @@ function handle_put(mysqli $conn): void {
         $stmt = $conn->prepare($sql);
         $stmt->bind_param('ss', $status, $id);
         $stmt->execute();
+        
+        // Log borrow item update
+        logUpdate('borrow_items', 'borrow_item', $id, $current_record['borrower_name'] . ' - ' . $current_record['item'], 
+            ['status' => $current_record['status']], 
+            ['status' => $status]
+        );
+        
         send_json(['success' => true]);
     }
 }
@@ -214,6 +334,10 @@ function update_inventory_quantity(mysqli $conn, $item_name, $quantity) {
     
     if ($new_quantity_row && function_exists('process_borrow_waiting_list')) {
         process_borrow_waiting_list($conn, $equipment['id'], $new_quantity_row['quantity']);
+    }
+
+    if ($new_quantity_row) {
+        process_reservation_waiting_list($conn, $equipment['id']);
     }
 }
 
@@ -367,19 +491,52 @@ function handle_delete(mysqli $conn): void {
         send_json(['success' => false, 'error' => 'Missing id'], 400);
     }
 
-    $sql = "DELETE FROM borrow_items WHERE id=?";
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        send_json(['success' => false, 'error' => $conn->error], 500);
+    // Get current user from session/headers
+    $headers = getallheaders();
+    $userId = $headers['X-User-Id'] ?? null;
+    
+    // If no user ID provided, try to get the first admin user
+    if (!$userId) {
+        $userResult = $conn->query("SELECT id FROM users WHERE role='admin' LIMIT 1");
+        if ($userResult && $userResult->num_rows > 0) {
+            $user = $userResult->fetch_assoc();
+            $userId = $user['id'];
+        }
     }
 
-    $stmt->bind_param('s', $id);
-
-    if (!$stmt->execute()) {
-        send_json(['success' => false, 'error' => $stmt->error], 500);
+    // Use TrashService for soft delete
+    try {
+        $trashService = new TrashService($conn);
+        
+        // Get borrow item details for logging
+        $item_sql = "SELECT borrower_name, item FROM borrow_items WHERE id = ?";
+        $item_stmt = $conn->prepare($item_sql);
+        $item_stmt->bind_param('s', $id);
+        $item_stmt->execute();
+        $item_result = $item_stmt->get_result();
+        $item_data = $item_result->fetch_assoc();
+        $item_stmt->close();
+        
+        $result = $trashService->softDelete(
+            'borrow_item',
+            $id,
+            $userId ? (int)$userId : null,
+            'Borrow Items'
+        );
+        
+        if ($result['success']) {
+            // Log borrow item deletion
+            if ($item_data) {
+                logDelete('borrow_items', 'borrow_item', $id, $item_data['borrower_name'] . ' - ' . $item_data['item']);
+            }
+            send_json(['success' => true, 'message' => 'Borrow item moved to trash. You can restore it from the Trash page.']);
+        } else {
+            send_json(['success' => false, 'error' => $result['error']], 500);
+        }
+    } catch (Exception $e) {
+        error_log("Exception in borrow_items delete: " . $e->getMessage());
+        send_json(['success' => false, 'error' => 'Failed to delete borrow item'], 500);
     }
-
-    send_json(['success' => true]);
 }
 
 function send_borrow_notification($borrow_record, $new_status, $rejection_reason = null) {

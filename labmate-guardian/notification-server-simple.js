@@ -1,6 +1,6 @@
 import express from 'express';
 import http from 'http';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 
@@ -16,27 +16,83 @@ const clients = new Set();
 wss.on('connection', (ws) => {
   const client = { ws, userId: null, role: null };
   clients.add(client);
-  console.log('New WebSocket client connected. Total clients:', clients.size);
+  console.log('🔌 New WebSocket client connected. Total clients:', clients.size);
 
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message.toString());
-      console.log('Received message:', data);
+      console.log('📨 Received message from client:', data);
+      
       if (data.type === 'identify') {
         client.userId = data.userId || null;
         client.role = data.role || null;
-        console.log(`Client identified: userId=${client.userId}, role=${client.role}`);
+        console.log(`✅ Client identified: userId=${client.userId}, role=${client.role}`);
+        
+        // Send confirmation back to client
+        ws.send(JSON.stringify({
+          type: 'identified',
+          userId: client.userId,
+          role: client.role,
+          timestamp: new Date().toISOString()
+        }));
       }
     } catch (err) {
-      console.error('Invalid message:', err);
+      console.error('❌ Invalid message:', err);
     }
   });
 
   ws.on('close', () => {
-    console.log('Client disconnected');
+    console.log(`🔌 Client disconnected: userId=${client.userId}, role=${client.role}`);
     clients.delete(client);
     console.log('Total clients after disconnect:', clients.size);
   });
+
+  ws.on('error', (error) => {
+    console.error('❌ WebSocket error for client:', client.userId, error.message);
+  });
+});
+
+// New endpoint for broadcasting activity logs to admins
+app.post('/broadcast-activity-log', (req, res) => {
+  const { log } = req.body || {};
+
+  if (!log) {
+    console.error('❌ Missing log data in broadcast request');
+    return res.status(400).json({ success: false, error: 'Missing log data' });
+  }
+
+  console.log('📢 Broadcasting activity log:', {
+    action: log.action,
+    module: log.module,
+    user: log.user_name,
+    severity: log.severity
+  });
+  
+  let sent = 0;
+  let adminCount = 0;
+  
+  clients.forEach((client) => {
+    if (client.ws.readyState !== WebSocket.OPEN) return;
+    
+    // Count admin clients
+    if (client.role === 'admin' || client.role === 'root_admin') {
+      adminCount++;
+      console.log(`  → Sending to admin client: userId=${client.userId}, role=${client.role}`);
+      
+      try {
+        client.ws.send(JSON.stringify({ 
+          type: 'activity_log', 
+          payload: log 
+        }));
+        sent++;
+      } catch (error) {
+        console.error(`  ✗ Failed to send to client ${client.userId}:`, error.message);
+      }
+    }
+  });
+
+  console.log(`✅ Activity log broadcast complete: ${sent}/${adminCount} admin clients notified (${clients.size} total clients)`);
+  return res.json({ success: true, sent, adminCount, totalClients: clients.size });
 });
 
 app.post('/notify', (req, res) => {

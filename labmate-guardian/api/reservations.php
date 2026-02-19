@@ -9,6 +9,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 require_once 'db.php';
+require_once __DIR__ . '/trash/TrashService.php';
+require_once __DIR__ . '/activity_log_helper.php';
 
 class ReservationsAPI {
     private $conn;
@@ -48,7 +50,7 @@ class ReservationsAPI {
                 FROM equipment_reservations r 
                 LEFT JOIN users u ON r.user_id = u.id 
                 LEFT JOIN inventory_equipment ie ON r.equipment_id = ie.id 
-                WHERE 1=1";
+                WHERE r.deleted_at IS NULL";
         
         $params = [];
         $types = "";
@@ -224,6 +226,15 @@ class ReservationsAPI {
         
         if ($stmt->execute()) {
             $reservation = $this->getReservationById($id);
+            
+            // Log reservation creation
+            logCreate('reservations', 'reservation', $id, $reservation_number, [
+                'equipment_id' => $equipmentId,
+                'reservation_date' => $reservationDate,
+                'quantity' => $quantityReserved,
+                'status' => $status
+            ]);
+            
             $this->sendResponse(['success' => true, 'reservation' => $reservation], 201);
         } else {
             $this->sendResponse(['error' => 'Failed to create reservation'], 500);
@@ -277,6 +288,10 @@ class ReservationsAPI {
         
         if ($stmt->execute()) {
             $reservation = $this->getReservationById($id);
+            
+            // Log reservation update
+            logUpdate('reservations', 'reservation', $id, $reservation['reservation_number'] ?? $id, null, $data);
+            
             $this->sendResponse(['success' => true, 'reservation' => $reservation]);
         } else {
             $this->sendResponse(['error' => 'Failed to update reservation'], 500);
@@ -291,20 +306,51 @@ class ReservationsAPI {
             return;
         }
         
-        $sql = "DELETE FROM equipment_reservations WHERE id = ?";
-        $stmt = $this->conn->prepare($sql);
-        $stmt->bind_param("s", $id);
+        // Get current user from session/headers
+        $headers = getallheaders();
+        $userId = $headers['X-User-Id'] ?? null;
         
-        if ($stmt->execute()) {
-            $this->sendResponse(['success' => true, 'message' => 'Reservation deleted']);
+        // If no user ID provided, try to get the first admin user
+        if (!$userId) {
+            $userResult = $this->conn->query("SELECT id FROM users WHERE role='admin' LIMIT 1");
+            if ($userResult && $userResult->num_rows > 0) {
+                $user = $userResult->fetch_assoc();
+                $userId = $user['id'];
+            }
+        }
+        
+        // Get reservation details for logging
+        $res_sql = "SELECT reservation_number FROM equipment_reservations WHERE id = ?";
+        $res_stmt = $this->conn->prepare($res_sql);
+        $res_stmt->bind_param('s', $id);
+        $res_stmt->execute();
+        $res_result = $res_stmt->get_result();
+        $res_data = $res_result->fetch_assoc();
+        $res_stmt->close();
+        
+        // Use TrashService for soft delete
+        $trashService = new TrashService($this->conn);
+        $result = $trashService->softDelete(
+            'reservation',
+            $id,
+            $userId ? (int)$userId : null,
+            'Reservations'
+        );
+        
+        if ($result['success']) {
+            // Log reservation deletion
+            if ($res_data) {
+                logDelete('reservations', 'reservation', $id, $res_data['reservation_number'] ?? $id);
+            }
+            $this->sendResponse(['success' => true, 'message' => 'Reservation moved to trash. You can restore it from the Trash page.']);
         } else {
-            $this->sendResponse(['error' => 'Failed to delete reservation'], 500);
+            $this->sendResponse(['error' => $result['error']], 500);
         }
     }
     
     private function hasConflicts($data) {
         $sql = "SELECT COUNT(*) as count FROM equipment_reservations 
-                WHERE equipment_id = ? AND reservation_date = ? AND status = 'approved'
+                WHERE equipment_id = ? AND reservation_date = ? AND status = 'approved' AND deleted_at IS NULL
                 AND ((start_time < ? AND end_time > ?) OR (start_time < ? AND end_time > ?) OR (start_time >= ? AND end_time <= ?))";
         
         $stmt = $this->conn->prepare($sql);
@@ -331,7 +377,7 @@ class ReservationsAPI {
     
     private function checkEquipmentAvailability($equipment_id, $date, $start_time, $end_time, $quantity) {
         // Get total equipment quantity
-        $sql = "SELECT quantity FROM inventory_equipment WHERE id = ?";
+        $sql = "SELECT quantity FROM inventory_equipment WHERE id = ? AND deleted_at IS NULL";
         $stmt = $this->conn->prepare($sql);
         if (!$stmt) {
             $this->sendResponse(['error' => 'Database error: ' . $this->conn->error], 500);
@@ -347,7 +393,7 @@ class ReservationsAPI {
         
         // Get total reserved quantity for the time slot
         $sql = "SELECT SUM(quantity_reserved) as total_reserved FROM equipment_reservations 
-                WHERE equipment_id = ? AND reservation_date = ? AND status = 'approved'
+                WHERE equipment_id = ? AND reservation_date = ? AND status = 'approved' AND deleted_at IS NULL
                 AND ((start_time < ? AND end_time > ?) OR (start_time < ? AND end_time > ?) OR (start_time >= ? AND end_time <= ?))";
         
         $stmt = $this->conn->prepare($sql);
@@ -379,7 +425,7 @@ class ReservationsAPI {
                 FROM equipment_reservations r 
                 LEFT JOIN users u ON r.user_id = u.id 
                 LEFT JOIN inventory_equipment ie ON r.equipment_id = ie.id 
-                WHERE r.id = ?";
+                WHERE r.id = ? AND r.deleted_at IS NULL";
         
         $stmt = $this->conn->prepare($sql);
         if (!$stmt) {

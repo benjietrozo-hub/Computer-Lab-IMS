@@ -1,6 +1,8 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/trash/TrashService.php';
+require_once __DIR__ . '/activity_log_helper.php';
 
 // Get user from request header (simplified approach)
 $headers = getallheaders();
@@ -36,7 +38,7 @@ switch ($method) {
 }
 
 function handle_get(mysqli $conn): void {
-    $result = $conn->query('SELECT * FROM lost_found ORDER BY created_at DESC');
+    $result = $conn->query('SELECT * FROM lost_found WHERE deleted_at IS NULL ORDER BY created_at DESC');
     if (!$result) {
         send_json(['success' => false, 'error' => $conn->error], 500);
     }
@@ -79,6 +81,13 @@ function handle_post(mysqli $conn): void {
     $stmt->bind_param('ssssssssss', $id, $title, $description, $item_type, $status, $location, $reported_by, $contact_info, $timestamp, $date_occurred);
 
     if ($stmt->execute()) {
+        // Log lost/found item creation
+        logCreate('lost_found', 'lost_found', $id, $title, [
+            'item_type' => $item_type,
+            'status' => $status,
+            'location' => $location
+        ]);
+        
         // Send notifications to admins about new lost/found item
         send_lostfound_notification_to_admins($id, $title, $item_type, $status, $location, $reported_by, $timestamp);
         
@@ -153,6 +162,9 @@ function handle_put(mysqli $conn): void {
     $stmt->bind_param('sssssssssss', $title, $description, $item_type, $status, $location, $reported_by, $contact_info, $timestamp, $date_occurred, $date_claimed, $id);
 
     if ($stmt->execute()) {
+        // Log lost/found item update
+        logUpdate('lost_found', 'lost_found', $id, $title, null, $input);
+        
         send_json(['success' => true]);
     } else {
         send_json(['success' => false, 'error' => $stmt->error], 500);
@@ -198,19 +210,23 @@ function handle_delete(mysqli $conn): void {
         return;
     }
 
-    $sql = "DELETE FROM lost_found WHERE id=?";
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        send_json(['success' => false, 'error' => $conn->error], 500);
-        return;
-    }
+    // Use soft delete instead of hard delete
+    $trashService = new TrashService($conn);
+    $result = $trashService->softDelete(
+        'lost_found',
+        $id,
+        $current_user_id,
+        'Lost & Found'
+    );
 
-    $stmt->bind_param('s', $id);
-
-    if ($stmt->execute()) {
-        send_json(['success' => true]);
+    if ($result['success']) {
+        // Log lost/found item deletion
+        if ($item) {
+            logDelete('lost_found', 'lost_found', $id, $item['reported_by']);
+        }
+        send_json(['success' => true, 'message' => 'Item moved to trash. You can restore it from the Trash page.']);
     } else {
-        send_json(['success' => false, 'error' => $stmt->error], 500);
+        send_json(['success' => false, 'error' => $result['error']], 500);
     }
 }
 

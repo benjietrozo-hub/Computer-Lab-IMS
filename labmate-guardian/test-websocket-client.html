@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Activity Log Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .log { background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 5px; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        #messages { max-height: 500px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Activity Log Test Client</h1>
+    <div>
+        <label>User ID: <input type="number" id="userId" value="6717" /></label>
+        <label>Role: <input type="text" id="role" value="admin" /></label>
+        <button onclick="connect()">Connect</button>
+        <button onclick="disconnect()">Disconnect</button>
+    </div>
+    <div id="status">Disconnected</div>
+    <h2>Messages:</h2>
+    <div id="messages"></div>
+
+    <script>
+        let ws = null;
+
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `log ${type}`;
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            document.getElementById('messages').prepend(div);
+        }
+
+        function connect() {
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                log('Already connected or connecting', 'error');
+                return;
+            }
+
+            const userId = document.getElementById('userId').value;
+            const role = document.getElementById('role').value;
+
+            log(`Connecting to ws://localhost:8082 as user ${userId} (${role})...`, 'info');
+            document.getElementById('status').textContent = 'Connecting...';
+
+            ws = new WebSocket('ws://localhost:8082');
+
+            ws.onopen = () => {
+                log('✅ WebSocket connected!', 'success');
+                document.getElementById('status').textContent = 'Connected';
+                
+                const identifyMessage = {
+                    type: 'identify',
+                    userId: userId,
+                    role: role
+                };
+                log(`Sending identify message: ${JSON.stringify(identifyMessage)}`, 'info');
+                ws.send(JSON.stringify(identifyMessage));
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    log(`📨 Received: ${JSON.stringify(message, null, 2)}`, 'success');
+                    
+                    if (message.type === 'activity_log') {
+                        log(`🎯 ACTIVITY LOG: ${message.payload.action} - ${message.payload.description}`, 'success');
+                    }
+                } catch (error) {
+                    log(`Error parsing message: ${error.message}`, 'error');
+                }
+            };
+
+            ws.onerror = (error) => {
+                log(`❌ WebSocket error: ${error}`, 'error');
+                document.getElementById('status').textContent = 'Error';
+            };
+
+            ws.onclose = () => {
+                log('🔌 WebSocket disconnected', 'info');
+                document.getElementById('status').textContent = 'Disconnected';
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        // Auto-connect on load
+        window.onload = () => {
+            connect();
+        };
+    </script>
+</body>
+</html>

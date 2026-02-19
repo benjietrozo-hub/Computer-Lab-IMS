@@ -25,7 +25,9 @@ import {
   Computer,
   Calendar,
   BarChart3,
-  CheckCircle
+  CheckCircle,
+  Trash2,
+  Activity
 } from "lucide-react";
 import { useWebSocket } from "@/hooks/useWebSocket";
 
@@ -37,7 +39,6 @@ const items = [
 ];
 
 const adminItems = [
-  { title: "Borrow Requests", url: "/borrow-requests", icon: ClipboardList },
   { title: "Borrowed Items", url: "/borrow", icon: Package },
   { title: "Inventory Equipment", url: "/inventory", icon: Boxes },
   { title: "Visitor Logs", url: "/visitors", icon: Users },
@@ -45,24 +46,19 @@ const adminItems = [
 ];
 
 const teacherItems = [
-  { title: "Inventory Equipment", url: "/inventory", icon: Boxes },
-  { title: "My Borrowed Items", url: "/my-borrows", icon: ClipboardList },
   { title: "My Returns", url: "/my-returns", icon: CheckCircle },
-  { title: "My Reservations", url: "/reservations", icon: Calendar },
   { title: "My Analytics", url: "/my-analytics", icon: BarChart3 },
 ];
 
 const studentItems = [
-  { title: "Inventory Equipment", url: "/inventory", icon: Boxes },
-  { title: "My Borrowed Items", url: "/my-borrows", icon: ClipboardList },
-  { title: "My Returns", url: "/my-returns", icon: CheckCircle },
   { title: "My Reservations", url: "/reservations", icon: Calendar },
-  { title: "My Analytics", url: "/my-analytics", icon: BarChart3 },
 ];
 const settings = [
   { title: "General Settings", url: "/settings", icon: Settings },
   { title: "Categories", url: "/settings/categories", icon: ListOrdered },
   { title: "Status Manager", url: "/settings/status", icon: ToggleLeft },
+  { title: "Trash / Recycle Bin", url: "/trash", icon: Trash2 },
+  { title: "Activity Logs", url: "/activity-logs", icon: Activity },
 ];
 
 
@@ -166,7 +162,7 @@ export function AppSidebar() {
     if (!currentUser) return;
 
     // Only admin-restricted paths
-    const adminOnlyPaths = ["/users", "/borrow-requests", "/borrow", "/analytics", "/settings"];
+    const adminOnlyPaths = ["/users", "/borrow", "/analytics", "/settings"];
     
     // Check if current path is admin-only and user is not admin
     if (adminOnlyPaths.some(path => currentPath.startsWith(path)) && normalizedRole !== "admin") {
@@ -214,7 +210,7 @@ export function AppSidebar() {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
-              {(normalizedRole === "admin" || normalizedRole === "instructor" || normalizedRole === "teacher" || normalizedRole === "student") && (
+              {(normalizedRole === "admin") && (
                 <SidebarGroup>
                   <SidebarGroupLabel>Borrow Management</SidebarGroupLabel>
                   <SidebarGroupContent>
@@ -294,19 +290,6 @@ export function AppSidebar() {
           <SidebarGroupLabel>My Records</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {normalizedRole !== "admin" && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={currentPath === "/my-requests"}>
-                    <NavLink to="/my-requests" className="flex items-center gap-2">
-                      <ClipboardList className="w-4 h-4" />
-                      <span>My Requests</span>
-                      {hasUnreadForUrl("/my-requests") && (
-                        <span className="ml-auto inline-flex h-2 w-2 rounded-full bg-red-500" />
-                      )}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={currentPath === "/my-borrows"}>
                   <NavLink to="/my-borrows" className="flex items-center gap-2">
@@ -318,6 +301,32 @@ export function AppSidebar() {
                   </NavLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+              {(normalizedRole === "student" || normalizedRole === "instructor" || normalizedRole === "teacher") && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={currentPath === "/my-returns"}>
+                    <NavLink to="/my-returns" className="flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4" />
+                      <span>My Returns</span>
+                      {hasUnreadForUrl("/my-returns") && (
+                        <span className="ml-auto inline-flex h-2 w-2 rounded-full bg-red-500" />
+                      )}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {(normalizedRole === "student" || normalizedRole === "instructor" || normalizedRole === "teacher") && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={currentPath === "/my-analytics"}>
+                    <NavLink to="/my-analytics" className="flex items-center gap-2">
+                      <BarChart3 className="w-4 h-4" />
+                      <span>My Analytics</span>
+                      {hasUnreadForUrl("/my-analytics") && (
+                        <span className="ml-auto inline-flex h-2 w-2 rounded-full bg-red-500" />
+                      )}
+                    </NavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

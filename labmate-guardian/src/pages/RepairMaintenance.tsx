@@ -13,6 +13,7 @@ import { Plus, Pencil, Trash2, CheckCircle, Eye, Lock, Printer, Download } from 
 import NavHeader from "@/components/NavHeader";
 import NotificationProfile from "@/components/NotificationProfile";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import { format } from "date-fns";
@@ -47,6 +48,8 @@ const RepairMaintenance = () => {
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [selectedRepairId, setSelectedRepairId] = useState<string>("");
   const [adminPassword, setAdminPassword] = useState("");
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<any>(null);
   
   // WebSocket notifications
   const { 
@@ -229,11 +232,16 @@ const RepairMaintenance = () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this repair record?")) return;
+  const handleDelete = (repair: any) => {
+    setItemToDelete(repair);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!itemToDelete) return;
 
     try {
-      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/repair_maintenance.php?id=${id}`, {
+      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/repair_maintenance.php?id=${itemToDelete.id}`, {
         method: "DELETE",
         headers: getAuthHeaders()
       });
@@ -243,10 +251,11 @@ const RepairMaintenance = () => {
       if (!response.ok || !result.success) {
         throw new Error(result.error || "Failed to delete repair record");
       }
+
       toast.success("Repair record deleted successfully");
       fetchRepairs();
     } catch (error: any) {
-      toast.error("Failed to delete repair record");
+      throw new Error(error.message || "Failed to delete repair record");
     }
   };
 
@@ -835,7 +844,7 @@ const RepairMaintenance = () => {
                   <TableCell className="text-right space-x-2">
                     <Button
                       size="sm"
-                     意思 variant="ghost"
+                      variant="ghost"
                       onClick={() => handleView(repair)}
                       title="View details"
                     >
@@ -872,7 +881,7 @@ const RepairMaintenance = () => {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => handleDelete(repair.id)}
+                        onClick={() => handleDelete(repair)}
                       >
                         <Trash2 className="w-4 h-4 text-destructive" />
                       </Button>
@@ -1241,6 +1250,18 @@ const RepairMaintenance = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <DeleteConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        onConfirm={confirmDelete}
+        title="Confirm Deletion"
+        description="This action requires admin password verification."
+        itemName={itemToDelete?.equipment_name}
+        requirePassword={currentUser?.role === 'admin'}
+        currentUser={currentUser}
+      />
       </div>
     </div>
   );

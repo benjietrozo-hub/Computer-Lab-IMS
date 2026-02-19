@@ -1,0 +1,185 @@
+================================================================================
+                    REAL-TIME ACTIVITY LOGS CHECKLIST
+================================================================================
+
+STEP 1: START THE SERVER
+================================================================================
+[ ] Open terminal/command prompt
+[ ] Navigate to labmate-guardian folder
+[ ] Run: node notification-server-simple.js
+    OR double-click: start-notification-server.bat (Windows)
+[ ] See message: "Notification server running on http://localhost:8082"
+[ ] KEEP THIS WINDOW OPEN!
+
+STEP 2: RUN DIAGNOSTIC TEST
+================================================================================
+[ ] Open NEW terminal (keep server running)
+[ ] Navigate to labmate-guardian folder
+[ ] Run: node diagnose-realtime-logs.js
+    OR double-click: test-realtime-logs.bat (Windows)
+[ ] See: "Test 1: ✅ Notification server is running"
+[ ] See: "Test 2: ✅ WebSocket connection established"
+[ ] See: "Test 3: ✅ Server confirmed identification"
+[ ] See: "Test 4: ✅ Received activity log broadcast!"
+[ ] See: "🎉 ALL TESTS PASSED!"
+
+If diagnostic FAILS, STOP and see DEBUG_STEPS.md
+
+STEP 3: TEST IN BROWSER
+================================================================================
+[ ] Open browser (Chrome, Firefox, Edge)
+[ ] Press F12 to open Developer Tools
+[ ] Go to Console tab
+[ ] Login to application as ADMIN user
+[ ] Navigate to Activity Logs page
+[ ] Look for "Real-Time ON" button with green pulsing dot
+
+BROWSER CONSOLE SHOULD SHOW:
+[ ] "Setting up WebSocket connection for admin user: [id] admin"
+[ ] "✅ Activity Logs WebSocket connected"
+[ ] "Sending identify message: {...}"
+[ ] "✅ Server confirmed identification: {...}"
+
+SERVER TERMINAL SHOULD SHOW:
+[ ] "🔌 New WebSocket client connected. Total clients: 1"
+[ ] "📨 Received message from client: {type: 'identify', ...}"
+[ ] "✅ Client identified: userId=[id], role=admin"
+
+STEP 4: TEST REAL ACTIVITY
+================================================================================
+[ ] Keep Activity Logs page open in one tab
+[ ] Open NEW tab in same browser
+[ ] Go to Inventory page
+[ ] Click "Add Equipment" button
+[ ] Fill in form and save
+[ ] Switch back to Activity Logs tab
+[ ] NEW LOG SHOULD APPEAR AT TOP IMMEDIATELY!
+
+BROWSER CONSOLE SHOULD SHOW:
+[ ] "📨 Received WebSocket message: activity_log"
+[ ] "📨 Received real-time activity log: {...}"
+
+SERVER TERMINAL SHOULD SHOW:
+[ ] "📢 Broadcasting activity log: {action: 'create', module: 'inventory', ...}"
+[ ] "→ Sending to admin client: userId=[id], role=admin"
+[ ] "✅ Activity log broadcast complete: 1/1 admin clients notified"
+
+STEP 5: VERIFY ALL FEATURES
+================================================================================
+[ ] New logs appear at TOP of table (not bottom)
+[ ] Timestamp is current (not delayed)
+[ ] User name displays correctly
+[ ] Action type shows correct color
+[ ] Stats cards update automatically
+[ ] Green indicator stays on
+[ ] No errors in console
+
+STEP 6: TEST MULTIPLE ACTIONS
+================================================================================
+[ ] Create another inventory item → Log appears
+[ ] Update an inventory item → Log appears
+[ ] Delete an inventory item → Log appears
+[ ] Create a reservation → Log appears
+[ ] Update a user → Log appears
+
+Each action should appear in Activity Logs INSTANTLY!
+
+STEP 7: TEST TOGGLE
+================================================================================
+[ ] Click "Real-Time ON" button to disable
+[ ] Button changes to "Real-Time OFF"
+[ ] Green indicator disappears
+[ ] Create an item → Log does NOT appear in real-time
+[ ] Click "Real-Time OFF" to enable again
+[ ] Button changes to "Real-Time ON"
+[ ] Green indicator reappears
+[ ] Create an item → Log DOES appear in real-time
+
+STEP 8: TEST REFRESH
+================================================================================
+[ ] Refresh Activity Logs page (F5)
+[ ] Green indicator reappears automatically
+[ ] Create an item → Log appears in real-time
+[ ] Connection re-established successfully
+
+================================================================================
+                              TROUBLESHOOTING
+================================================================================
+
+IF DIAGNOSTIC TEST FAILS:
+→ See DEBUG_STEPS.md for detailed instructions
+
+IF NO GREEN INDICATOR:
+→ Check you're logged in as admin
+→ Check browser console for errors
+→ Restart notification server
+
+IF CONNECTED BUT NO LOGS:
+→ Check server terminal for broadcast messages
+→ Run: node test-activity-log-broadcast.js
+→ Check if ActivityLogger is working
+
+IF "NOT ADMIN" MESSAGE:
+→ Verify user role: JSON.parse(localStorage.getItem('user')).role
+→ Should be "admin"
+
+IF SERVER WON'T START:
+→ Check if port 8082 is in use: netstat -ano | findstr :8082
+→ Kill the process and try again
+
+================================================================================
+                            SUCCESS INDICATORS
+================================================================================
+
+✅ Diagnostic script shows "ALL TESTS PASSED"
+✅ Green pulsing dot visible on button
+✅ Browser console shows "Server confirmed identification"
+✅ Server terminal shows broadcasts being sent
+✅ Logs appear instantly (< 1 second)
+✅ Stats update in real-time
+✅ No errors in console
+✅ Multiple actions all appear in real-time
+
+================================================================================
+                              QUICK REFERENCE
+================================================================================
+
+Start Server:
+  Windows: Double-click start-notification-server.bat
+  Command: node notification-server-simple.js
+
+Test System:
+  Windows: Double-click test-realtime-logs.bat
+  Command: node diagnose-realtime-logs.js
+
+Check Server Running:
+  Command: netstat -ano | findstr :8082
+
+Check User Role:
+  Browser Console: JSON.parse(localStorage.getItem('user')).role
+
+View WebSocket:
+  Browser: F12 → Network tab → Filter by "WS"
+
+================================================================================
+                            DOCUMENTATION FILES
+================================================================================
+
+Quick Start:           START_HERE_REALTIME_FIX.md
+Debugging:             DEBUG_STEPS.md
+Troubleshooting:       REALTIME_LOGS_TROUBLESHOOTING.md
+Technical Details:     REALTIME_LOGS_FIX_SUMMARY.md
+Verification:          REALTIME_LOGS_VERIFICATION.md
+Final Instructions:    REALTIME_LOGS_FINAL_INSTRUCTIONS.md
+
+================================================================================
+                              IMPORTANT NOTES
+================================================================================
+
+⚠️  Notification server MUST be running for real-time logs to work
+⚠️  You must be logged in as ADMIN user (not regular user)
+⚠️  Keep server terminal open while using the application
+⚠️  Port 8082 must be available (not used by another program)
+⚠️  Browser must stay on Activity Logs page to see updates
+
+================================================================================

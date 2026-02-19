@@ -133,7 +133,25 @@ const NotificationProfile = ({
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      // Call logout endpoint to log the action
+      await fetch('http://localhost/labmate/labmate-guardian/api/auth_logout.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          user_id: currentUser?.id,
+          user_email: currentUser?.email
+        })
+      });
+    } catch (error) {
+      console.error('Error logging logout:', error);
+      // Continue with logout even if logging fails
+    }
+    
+    // Clear local storage and redirect
     localStorage.removeItem("user");
     navigate("/login");
   };
@@ -189,7 +207,8 @@ const NotificationProfile = ({
                         markAsRead(n.id);
                       }
                       if (n.actionUrl) {
-                        window.location.href = n.actionUrl;
+                        const target = n.actionUrl.startsWith('/borrow-requests') ? '/reservations' : n.actionUrl;
+                        navigate(target);
                       }
                     }}
                   >

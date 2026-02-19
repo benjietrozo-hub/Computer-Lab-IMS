@@ -7,12 +7,15 @@ import { toast } from "sonner";
 import { Trash2, Eye } from "lucide-react";
 
 import NavHeader from "@/components/NavHeader";
+import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 
 
 const MyRequests = () => {
   const navigate = useNavigate();
   const [myRequests, setMyRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<any>(null);
   
   const storedUser = typeof window !== "undefined" ? localStorage.getItem("user") : null;
   const currentUser = storedUser ? JSON.parse(storedUser) : null;
@@ -65,11 +68,16 @@ const MyRequests = () => {
     fetchMyRequests();
   }, [currentUser]);
 
-  const handleDeleteRequest = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this request?")) return;
+  const handleDeleteRequest = (request: any) => {
+    setItemToDelete(request);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!itemToDelete) return;
 
     try {
-      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/borrow_requests.php?id=${id}`, {
+      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/borrow_requests.php?id=${itemToDelete.id}`, {
         method: "DELETE",
       });
 
@@ -82,7 +90,7 @@ const MyRequests = () => {
       toast.success("Request deleted successfully");
       fetchMyRequests();
     } catch (error: any) {
-      toast.error("Failed to delete request");
+      throw new Error(error.message || "Failed to delete request");
     }
   };
 
@@ -192,7 +200,7 @@ const MyRequests = () => {
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() => handleDeleteRequest(request.id)}
+                          onClick={() => handleDeleteRequest(request)}
                           title="Delete request"
                         >
                           <Trash2 className="w-4 h-4 text-red-600" />
@@ -205,6 +213,18 @@ const MyRequests = () => {
             </TableBody>
           </Table>
         </div>
+
+        {/* Delete Confirmation Dialog */}
+        <DeleteConfirmDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          onConfirm={confirmDelete}
+          title="Confirm Deletion"
+          description="Are you sure you want to delete this request?"
+          itemName={itemToDelete?.item}
+          requirePassword={false}
+          currentUser={currentUser}
+        />
       </div>
     </div>
   );

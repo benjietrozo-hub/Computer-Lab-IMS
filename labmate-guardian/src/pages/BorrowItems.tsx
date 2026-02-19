@@ -18,6 +18,7 @@ import html2canvas from "html2canvas";
 import NavHeader from "@/components/NavHeader";
 import NotificationProfile from "@/components/NotificationProfile";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 
 
 const BorrowItems = () => {
@@ -52,9 +53,10 @@ const BorrowItems = () => {
   const [returnNotes, setReturnNotes] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchTerm, setSearchTerm] = useState<string>("");
-  const [adminPassword, setAdminPassword] = useState<string>("");
   const [viewModalOpen, setViewModalOpen] = useState(false);
   const [selectedItemForView, setSelectedItemForView] = useState<any>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<any>(null);
 
   useEffect(() => {
     console.log("Current user:", currentUser);
@@ -107,16 +109,11 @@ const BorrowItems = () => {
     setReturnItem(item);
     setReturnCondition("good");
     setReturnNotes("");
-    setAdminPassword("");
     setReturnModalOpen(true);
   };
 
   const handleConfirmReturn = async () => {
     if (!returnItem) return;
-    if (!adminPassword) {
-      toast.error("Admin password is required to confirm return");
-      return;
-    }
     try {
       const response = await fetch(`http://localhost/labmate/labmate-guardian/api/borrow_items.php?id=${returnItem.id}`, {
         method: "PUT",
@@ -127,8 +124,7 @@ const BorrowItems = () => {
           status: "returned",
           return_condition: returnCondition,
           return_notes: returnNotes,
-          admin_id: currentUser?.id,
-          admin_password: adminPassword
+          admin_id: currentUser?.id
         }),
       });
 
@@ -140,18 +136,22 @@ const BorrowItems = () => {
       toast.success(result.message || "Item returned successfully");
       setReturnModalOpen(false);
       setReturnItem(null);
-      setAdminPassword("");
-      fetchItems();
+        fetchItems();
     } catch (error: any) {
       toast.error(error.message || "Failed to update status");
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this record?")) return;
+  const handleDelete = (item: any) => {
+    setItemToDelete(item);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!itemToDelete) return;
 
     try {
-      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/borrow_items.php?id=${id}`, {
+      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/borrow_items.php?id=${itemToDelete.id}`, {
         method: "DELETE",
       });
 
@@ -160,10 +160,11 @@ const BorrowItems = () => {
       if (!response.ok || !result.success) {
         throw new Error(result.error || "Failed to delete record");
       }
+
       toast.success("Record deleted successfully");
       fetchItems();
     } catch (error: any) {
-      toast.error("Failed to delete record");
+      throw new Error(error.message || "Failed to delete record");
     }
   };
 
@@ -507,7 +508,7 @@ const BorrowItems = () => {
                             <Button
                               size="sm"
                               variant="ghost"
-                              onClick={() => handleDelete(item.id)}
+                              onClick={() => handleDelete(item)}
                               title="Delete"
                             >
                               <Trash2 className="w-4 h-4 text-red-600" />
@@ -539,8 +540,7 @@ const BorrowItems = () => {
             setReturnModalOpen(open);
             if (!open) {
               setReturnItem(null);
-              setAdminPassword("");
-            }
+                      }
           }}
         >
           <DialogContent className="max-w-md">
@@ -575,16 +575,6 @@ const BorrowItems = () => {
                   <Label htmlFor="notes">Condition Remarks</Label>
                   <Textarea id="notes" placeholder="Add notes about the returned item..." value={returnNotes} onChange={(e) => setReturnNotes(e.target.value)} />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="admin-return-password">Admin Password</Label>
-                  <Input
-                    id="admin-return-password"
-                    type="password"
-                    autoComplete="new-password"
-                    value={adminPassword}
-                    onChange={(e) => setAdminPassword(e.target.value)}
-                  />
-                </div>
                 <div className="flex justify-end gap-2 pt-2">
                   <Button
                     type="button"
@@ -592,8 +582,7 @@ const BorrowItems = () => {
                     onClick={() => {
                       setReturnModalOpen(false);
                       setReturnItem(null);
-                      setAdminPassword("");
-                    }}
+                                      }}
                   >
                     Cancel
                   </Button>
@@ -736,6 +725,18 @@ const BorrowItems = () => {
             )}
           </DialogContent>
         </Dialog>
+
+        {/* Delete Confirmation Dialog */}
+        <DeleteConfirmDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          onConfirm={confirmDelete}
+          title="Confirm Deletion"
+          description="This action requires admin password verification."
+          itemName={itemToDelete?.item}
+          requirePassword={currentUser?.role === 'admin'}
+          currentUser={currentUser}
+        />
       </div>
     </div>
   );

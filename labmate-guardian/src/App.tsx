@@ -1,47 +1,50 @@
+import { Suspense, lazy } from "react";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { AuthGuard } from "@/components/AuthGuard";
-import { useWebSocket } from "@/hooks/useWebSocket";
 import { useMaintenanceMode } from "@/hooks/useMaintenanceMode";
+import { useWebSocket } from "@/hooks/useWebSocket";
 import AdminRoute from "@/components/AdminRoute";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { User as UserIcon, Bell } from "lucide-react";
 import MaintenanceBanner from "@/components/MaintenanceBanner";
-import { useEffect, useState } from "react";
-import Index from "./pages/Index";
-import Login from "./pages/Login";
-import IncidentReports from "./pages/IncidentReports";
-import LostFound from "./pages/LostFound";
-import Inventory from "./pages/Inventory";
-import BorrowItems from "./pages/BorrowItems";
-import VisitorLogs from "./pages/VisitorLogs";
-import RepairMaintenance from "./pages/RepairMaintenance";
-import Users from "./pages/Users";
-import Profile from "./pages/Profile";
-import NotFound from "./pages/NotFound";
-import SystemSettings from "./pages/SystemSettings";
-import Categories from "./pages/settings/Categories";
-import StatusSettings from "./pages/settings/StatusSettings";
-import MyBorrows from "./pages/MyBorrows";
-import MyReturns from "./pages/MyReturns";
-import BorrowRequests from "./pages/BorrowRequests";
-import MyRequests from "./pages/MyRequests";
-import Reservations from "./pages/Reservations";
-import Analytics from "./pages/Analytics";
-import UserAnalytics from "./pages/UserAnalytics";
+import { Loader2 } from "lucide-react";
+
+// Lazy load all page components
+const Index = lazy(() => import("./pages/Index"));
+const Login = lazy(() => import("./pages/Login"));
+const IncidentReports = lazy(() => import("./pages/IncidentReports"));
+const LostFound = lazy(() => import("./pages/LostFound"));
+const Inventory = lazy(() => import("./pages/Inventory"));
+const BorrowItems = lazy(() => import("./pages/BorrowItems"));
+const VisitorLogs = lazy(() => import("./pages/VisitorLogs"));
+const RepairMaintenance = lazy(() => import("./pages/RepairMaintenance"));
+const Users = lazy(() => import("./pages/Users"));
+const Profile = lazy(() => import("./pages/Profile"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const SystemSettings = lazy(() => import("./pages/SystemSettings"));
+const Categories = lazy(() => import("./pages/settings/Categories"));
+const StatusSettings = lazy(() => import("./pages/settings/StatusSettings"));
+const MyBorrows = lazy(() => import("./pages/MyBorrows"));
+const MyReturns = lazy(() => import("./pages/MyReturns"));
+const MyRequests = lazy(() => import("./pages/MyRequests"));
+const Reservations = lazy(() => import("./pages/Reservations"));
+const Analytics = lazy(() => import("./pages/Analytics"));
+const UserAnalytics = lazy(() => import("./pages/UserAnalytics"));
+const TrashView = lazy(() => import("./pages/TrashView"));
+const ActivityLogs = lazy(() => import("./pages/ActivityLogs"));
+
+// Loading component
+const LoadingFallback = () => (
+  <div className="flex items-center justify-center min-h-screen">
+    <Loader2 className="h-8 w-8 animate-spin" />
+  </div>
+);
 
 type Notification = {
   title: string;
@@ -60,12 +63,34 @@ const ProtectedLayout = ({ children }: { children: React.ReactNode }) => {
     ? JSON.parse(storedUser)
     : null;
 
-  const { notifications, unreadCount, isConnected, markAsRead, markAllAsRead } = useWebSocket(
-    currentUser?.id || "",
-    currentUser?.role || "student"
-  );
+  // Initialize WebSocket only if user is logged in
+  const ws = currentUser ? useWebSocket(
+    currentUser.id,
+    currentUser.role || 'student'
+  ) : null;
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const storedUser = localStorage.getItem("user");
+    const currentUser = storedUser ? JSON.parse(storedUser) : null;
+    
+    try {
+      // Call logout endpoint to log the action
+      await fetch('http://localhost/labmate/labmate-guardian/api/auth_logout.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          user_id: currentUser?.id,
+          user_email: currentUser?.email
+        })
+      });
+    } catch (error) {
+      console.error('Error logging logout:', error);
+      // Continue with logout even if logging fails
+    }
+    
+    // Clear local storage and redirect
     localStorage.removeItem("user");
     navigate("/login");
   };
@@ -88,41 +113,79 @@ const ProtectedLayout = ({ children }: { children: React.ReactNode }) => {
   );
 };
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+
+// Create a wrapper component that includes Suspense
+const SuspenseWrapper = ({ children }: { children: React.ReactNode }) => (
+  <Suspense fallback={<LoadingFallback />}>
+    {children}
+  </Suspense>
+);
+
+// Create a protected route wrapper with Suspense
+const ProtectedRoute = ({ children }: { children: React.ReactNode }) => (
+  <ProtectedLayout>
+    <SuspenseWrapper>
+      {children}
+    </SuspenseWrapper>
+  </ProtectedLayout>
+);
+
+// Create an admin route wrapper with Suspense
+const AdminProtectedRoute = ({ children }: { children: React.ReactNode }) => (
+  <ProtectedLayout>
+    <AdminRoute>
+      <SuspenseWrapper>
+        {children}
+      </SuspenseWrapper>
+    </AdminRoute>
+  </ProtectedLayout>
+);
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/" element={<ProtectedLayout><Index /></ProtectedLayout>} />
-          <Route path="/incidents" element={<ProtectedLayout><IncidentReports /></ProtectedLayout>} />
-          <Route path="/lost-found" element={<ProtectedLayout><LostFound /></ProtectedLayout>} />
-          <Route path="/inventory" element={<ProtectedLayout><Inventory /></ProtectedLayout>} />
-          <Route path="/borrow" element={<ProtectedLayout><BorrowItems /></ProtectedLayout>} />
-          <Route path="/borrow-requests" element={<ProtectedLayout><AdminRoute><BorrowRequests /></AdminRoute></ProtectedLayout>} />
-          <Route path="/my-requests" element={<ProtectedLayout><MyRequests /></ProtectedLayout>} />
-          <Route path="/my-borrows" element={<ProtectedLayout><MyBorrows /></ProtectedLayout>} />
-          <Route path="/my-returns" element={<ProtectedLayout><MyReturns /></ProtectedLayout>} />
-          <Route path="/visitors" element={<ProtectedLayout><AdminRoute><VisitorLogs /></AdminRoute></ProtectedLayout>} />
-          <Route path="/repairs" element={<ProtectedLayout><RepairMaintenance /></ProtectedLayout>} />
-          <Route path="/reservations" element={<ProtectedLayout><Reservations /></ProtectedLayout>} />
-          <Route path="/analytics" element={<ProtectedLayout><AdminRoute><Analytics /></AdminRoute></ProtectedLayout>} />
-          <Route path="/my-analytics" element={<ProtectedLayout><UserAnalytics /></ProtectedLayout>} />
-          <Route path="/users" element={<ProtectedLayout><AdminRoute><Users /></AdminRoute></ProtectedLayout>} />
-          <Route path="/profile" element={<ProtectedLayout><Profile /></ProtectedLayout>} />
-          <Route path="*" element={<NotFound />} />
-          <Route path="/settings" element={<ProtectedLayout><AdminRoute><SystemSettings /></AdminRoute></ProtectedLayout>} />
-          <Route path="/settings/categories" element={<ProtectedLayout><AdminRoute><Categories /></AdminRoute></ProtectedLayout>} />
-          <Route path="/settings/status" element={<ProtectedLayout><AdminRoute><StatusSettings /></AdminRoute></ProtectedLayout>} />
-
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
+  <ErrorBoundary>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <BrowserRouter>
+          <Suspense fallback={<LoadingFallback />}>
+            <Routes>
+            <Route path="/login" element={<SuspenseWrapper><Login /></SuspenseWrapper>} />
+            <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
+            <Route path="/incidents" element={<ProtectedRoute><IncidentReports /></ProtectedRoute>} />
+            <Route path="/lost-found" element={<ProtectedRoute><LostFound /></ProtectedRoute>} />
+            <Route path="/inventory" element={<ProtectedRoute><Inventory /></ProtectedRoute>} />
+            <Route path="/borrow" element={<ProtectedRoute><BorrowItems /></ProtectedRoute>} />
+            <Route path="/my-requests" element={<ProtectedRoute><MyRequests /></ProtectedRoute>} />
+            <Route path="/my-borrows" element={<ProtectedRoute><MyBorrows /></ProtectedRoute>} />
+            <Route path="/my-returns" element={<ProtectedRoute><MyReturns /></ProtectedRoute>} />
+            <Route path="/visitors" element={<AdminProtectedRoute><VisitorLogs /></AdminProtectedRoute>} />
+            <Route path="/repairs" element={<ProtectedRoute><RepairMaintenance /></ProtectedRoute>} />
+            <Route path="/reservations" element={<ProtectedRoute><Reservations /></ProtectedRoute>} />
+            <Route path="/analytics" element={<AdminProtectedRoute><Analytics /></AdminProtectedRoute>} />
+            <Route path="/my-analytics" element={<ProtectedRoute><UserAnalytics /></ProtectedRoute>} />
+            <Route path="/users" element={<AdminProtectedRoute><Users /></AdminProtectedRoute>} />
+            <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+            <Route path="/settings" element={<AdminProtectedRoute><SystemSettings /></AdminProtectedRoute>} />
+            <Route path="/settings/categories" element={<AdminProtectedRoute><Categories /></AdminProtectedRoute>} />
+            <Route path="/settings/status" element={<AdminProtectedRoute><StatusSettings /></AdminProtectedRoute>} />
+            <Route path="/trash" element={<AdminProtectedRoute><TrashView /></AdminProtectedRoute>} />
+            <Route path="/activity-logs" element={<AdminProtectedRoute><ActivityLogs /></AdminProtectedRoute>} />
+            <Route path="*" element={<SuspenseWrapper><NotFound /></SuspenseWrapper>} />
+            </Routes>
+          </Suspense>
+        </BrowserRouter>
+      </TooltipProvider>
+    </QueryClientProvider>
+  </ErrorBoundary>
 );
 
 export default App;

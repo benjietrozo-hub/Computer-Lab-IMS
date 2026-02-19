@@ -12,6 +12,7 @@ import { Plus, Pencil, Trash2, Eye } from "lucide-react";
 import NavHeader from "@/components/NavHeader";
 import NotificationProfile from "@/components/NotificationProfile";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { DeleteConfirmDialog } from "@/components/DeleteConfirmDialog";
 
 
 
@@ -33,6 +34,8 @@ const IncidentReports = () => {
   const [loadingComments, setLoadingComments] = useState(false);
   const [editingComment, setEditingComment] = useState<any>(null);
   const [editCommentText, setEditCommentText] = useState("");
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<any>(null);
   
   // WebSocket notifications
   const { 
@@ -140,11 +143,16 @@ const IncidentReports = () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this report?")) return;
+  const handleDelete = (report: any) => {
+    setItemToDelete(report);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!itemToDelete) return;
 
     try {
-      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/incident_reports.php?id=${id}`, {
+      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/incident_reports.php?id=${itemToDelete.id}`, {
         method: "DELETE",
         headers: getAuthHeaders()
       });
@@ -157,7 +165,7 @@ const IncidentReports = () => {
       toast.success("Incident report deleted successfully");
       fetchReports();
     } catch (error: any) {
-      toast.error(error.message || "Failed to delete incident report");
+      throw new Error(error.message || "Failed to delete incident report");
     }
   };
 
@@ -516,7 +524,7 @@ const IncidentReports = () => {
                         </Button>
                       )}
                       {canDeleteReport(report) && (
-                        <Button size="sm" variant="outline" onClick={() => handleDelete(report.id)}>
+                        <Button size="sm" variant="outline" onClick={() => handleDelete(report)}>
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       )}
@@ -680,6 +688,18 @@ const IncidentReports = () => {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Delete Confirmation Dialog */}
+        <DeleteConfirmDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          onConfirm={confirmDelete}
+          title="Confirm Deletion"
+          description="This action requires admin password verification."
+          itemName={itemToDelete?.name || itemToDelete?.title}
+          requirePassword={currentUser?.role === 'admin'}
+          currentUser={currentUser}
+        />
       </div>
     </div>
   );

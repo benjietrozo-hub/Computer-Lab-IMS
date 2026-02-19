@@ -1,14 +1,14 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, Eye } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye, AlertTriangle } from "lucide-react";
 import NavHeader from "@/components/NavHeader";
 import NotificationProfile from "@/components/NotificationProfile";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -28,6 +28,10 @@ const LostFound = () => {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [viewingItem, setViewingItem] = useState<any>(null);
   const [viewOpen, setViewOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<any>(null);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
   
   // WebSocket notifications
   const { 
@@ -141,11 +145,48 @@ const LostFound = () => {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this item?")) return;
+  const handleDelete = async (item: any) => {
+    setItemToDelete(item);
+    setDeleteDialogOpen(true);
+    setAdminPassword("");
+  };
+
+  const confirmDelete = async () => {
+    if (!itemToDelete) return;
+
+    const user = getUserData();
+    
+    // Verify admin password
+    if (!adminPassword) {
+      toast.error("Please enter admin password");
+      return;
+    }
+
+    setIsDeleting(true);
 
     try {
-      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/lost_found.php?id=${id}`, {
+      // Verify admin credentials
+      const verifyResponse = await fetch("http://localhost/labmate/labmate-guardian/api/auth_login.php", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: user?.email,
+          password: adminPassword,
+        }),
+      });
+
+      const verifyResult = await verifyResponse.json();
+
+      if (!verifyResult.success) {
+        toast.error("Invalid admin password");
+        setIsDeleting(false);
+        return;
+      }
+
+      // Proceed with deletion
+      const response = await fetch(`http://localhost/labmate/labmate-guardian/api/lost_found.php?id=${itemToDelete.id}`, {
         method: "DELETE",
         headers: getAuthHeaders()
       });
@@ -156,9 +197,14 @@ const LostFound = () => {
       }
 
       toast.success("Lost & Found item deleted successfully");
+      setDeleteDialogOpen(false);
+      setItemToDelete(null);
+      setAdminPassword("");
       fetchItems();
     } catch (error: any) {
       toast.error(error.message || "Failed to delete lost and found item");
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -427,7 +473,7 @@ const LostFound = () => {
                         </Button>
                       )}
                       {canDeleteItem(item) && (
-                        <Button size="sm" variant="outline" onClick={() => handleDelete(item.id)}>
+                        <Button size="sm" variant="outline" onClick={() => handleDelete(item)}>
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       )}
@@ -507,6 +553,68 @@ const LostFound = () => {
                 Close
               </Button>
             </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Delete Confirmation Dialog with Admin Password */}
+        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-red-500" />
+                Confirm Deletion
+              </DialogTitle>
+              <DialogDescription>
+                This action requires admin password verification.
+              </DialogDescription>
+            </DialogHeader>
+            {itemToDelete && (
+              <div className="space-y-4">
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <p className="text-sm text-red-800">
+                    You are about to delete: <strong>{itemToDelete.title}</strong>
+                  </p>
+                  <p className="text-xs text-red-600 mt-1">
+                    This will move the item to trash. You can restore it later from the Trash page.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="admin-password">Admin Password *</Label>
+                  <Input
+                    id="admin-password"
+                    type="password"
+                    value={adminPassword}
+                    onChange={(e) => setAdminPassword(e.target.value)}
+                    placeholder="Enter your admin password"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !isDeleting) {
+                        confirmDelete();
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setDeleteDialogOpen(false);
+                  setItemToDelete(null);
+                  setAdminPassword("");
+                }}
+                disabled={isDeleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={confirmDelete}
+                disabled={isDeleting || !adminPassword}
+              >
+                {isDeleting ? "Deleting..." : "Delete Item"}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>

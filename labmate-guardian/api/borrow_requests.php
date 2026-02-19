@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
+require_once __DIR__ . '/trash/TrashService.php';
 
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
 header("Access-Control-Allow-Origin: $origin");
@@ -32,7 +33,7 @@ switch ($method) {
 }
 
 function handle_requests_get(mysqli $conn): void {
-    $result = $conn->query('SELECT * FROM borrow_requests ORDER BY created_at DESC');
+    $result = $conn->query('SELECT * FROM borrow_requests WHERE deleted_at IS NULL ORDER BY created_at DESC');
     if (!$result) {
         send_json(['success' => false, 'error' => $conn->error], 500);
     }
@@ -81,8 +82,34 @@ function handle_requests_post(mysqli $conn): void {
 
     $available_qty = (int)$inventory_row['quantity'];
     
-    // If insufficient inventory, set status to waiting and create waiting list entry
-    if ($available_qty < $quantity) {
+    // Compute effective availability after accounting for pending borrow requests and today's approved reservations
+    $pending_total = 0;
+    $pending_sql = "SELECT COALESCE(SUM(quantity),0) AS total FROM borrow_requests WHERE item = ? AND status = 'pending'";
+    if ($pending_stmt = $conn->prepare($pending_sql)) {
+        $pending_stmt->bind_param('s', $item);
+        $pending_stmt->execute();
+        $pending_result = $pending_stmt->get_result();
+        $pending_row = $pending_result->fetch_assoc();
+        $pending_total = (int)($pending_row['total'] ?? 0);
+        $pending_stmt->close();
+    }
+
+    $reserved_total = 0;
+    $today = date('Y-m-d');
+    $reserved_sql = "SELECT COALESCE(SUM(quantity_reserved),0) AS total FROM equipment_reservations WHERE equipment_id = ? AND reservation_date = ? AND status = 'approved'";
+    if ($reserved_stmt = $conn->prepare($reserved_sql)) {
+        $reserved_stmt->bind_param('ss', $inventory_row['id'], $today);
+        $reserved_stmt->execute();
+        $reserved_result = $reserved_stmt->get_result();
+        $reserved_row = $reserved_result->fetch_assoc();
+        $reserved_total = (int)($reserved_row['total'] ?? 0);
+        $reserved_stmt->close();
+    }
+
+    $effective_available = $available_qty - $pending_total - $reserved_total;
+
+    // If effective availability is insufficient, set status to waiting and create waiting list entry
+    if ($effective_available < $quantity) {
         $status = 'waiting';
         
         // Get user ID from email
@@ -126,7 +153,10 @@ function handle_requests_post(mysqli $conn): void {
     // Debug: Log successful insertion
     error_log("Borrow request inserted successfully with message: '$message' and status: '$status'");
 
-    // Send consolidated notifications
+    // Notify the borrower about submission
+    send_borrow_request_confirmation($id, $borrower_name, $borrower_email, $item, $quantity);
+
+    // Send consolidated notifications to admins
     send_consolidated_borrow_notifications($id, $borrower_name, $borrower_email, $item, $quantity, $status);
 
     send_json(['success' => true, 'status' => $status]);
@@ -337,19 +367,45 @@ function handle_requests_delete(mysqli $conn): void {
         send_json(['success' => false, 'error' => 'Missing id'], 400);
     }
 
-    $sql = "DELETE FROM borrow_requests WHERE id=?";
-    $stmt = $conn->prepare($sql);
-    if (!$stmt) {
-        send_json(['success' => false, 'error' => $conn->error], 500);
+    // Get current user from session/headers
+    $headers = getallheaders();
+    $userId = $headers['X-User-Id'] ?? null;
+    
+    // If no user ID provided, try to get the first admin user
+    if (!$userId) {
+        $userResult = $conn->query("SELECT id FROM users WHERE role='admin' LIMIT 1");
+        if ($userResult && $userResult->num_rows > 0) {
+            $user = $userResult->fetch_assoc();
+            $userId = $user['id'];
+        }
     }
-
-    $stmt->bind_param('s', $id);
-
-    if (!$stmt->execute()) {
-        send_json(['success' => false, 'error' => $stmt->error], 500);
+    
+    // Log the delete attempt
+    error_log("Attempting to soft delete borrow request: {$id} by user: " . ($userId ?? 'NULL'));
+    
+    // Use TrashService for soft delete
+    try {
+        $trashService = new TrashService($conn);
+        $result = $trashService->softDelete(
+            'borrow_request',
+            $id,
+            $userId ? (int)$userId : null,
+            'Borrow Requests'
+        );
+        
+        error_log("Soft delete result: " . json_encode($result));
+        
+        if ($result['success']) {
+            send_json(['success' => true, 'message' => 'Borrow request moved to trash. You can restore it from the Trash page.']);
+        } else {
+            error_log("Soft delete failed: " . $result['error']);
+            send_json(['success' => false, 'error' => $result['error']], 500);
+        }
+    } catch (Exception $e) {
+        error_log("Exception in handle_requests_delete: " . $e->getMessage());
+        error_log("Stack trace: " . $e->getTraceAsString());
+        send_json(['success' => false, 'error' => 'Exception: ' . $e->getMessage()], 500);
     }
-
-    send_json(['success' => true]);
 }
 
 function create_borrowed_item_from_request($request, $approved_by) {
