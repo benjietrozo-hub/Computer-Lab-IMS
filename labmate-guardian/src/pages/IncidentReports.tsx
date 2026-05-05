@@ -78,6 +78,14 @@ const IncidentReports = () => {
     reported_by: `${currentUser?.first_name || ""} ${currentUser?.last_name || ""} (${currentUser?.role === 'user' ? 'student' : currentUser?.role || 'user'})`.trim(),
     hardware_type: "",
     hardware_damage: "",
+    software_type: "",
+    software_issue: "",
+    network_type: "",
+    network_issue: "",
+    security_type: "",
+    security_details: "",
+    facility_type: "",
+    facility_issue: "",
     timestamp: new Date().toISOString()
   });
 
@@ -180,6 +188,14 @@ const IncidentReports = () => {
       reported_by: `${user?.first_name || ""} ${user?.last_name || ""} (${user?.role === 'user' ? 'student' : user?.role || 'user'})`.trim(),
       hardware_type: "",
       hardware_damage: "",
+      software_type: "",
+      software_issue: "",
+      network_type: "",
+      network_issue: "",
+      security_type: "",
+      security_details: "",
+      facility_type: "",
+      facility_issue: "",
       timestamp: new Date().toISOString()
     });
     setEditingReport(null);
@@ -196,6 +212,14 @@ const IncidentReports = () => {
       reported_by: report.reported_by || "",
       hardware_type: report.hardware_type || "",
       hardware_damage: report.hardware_damage || "",
+      software_type: report.software_type || "",
+      software_issue: report.software_issue || "",
+      network_type: report.network_type || "",
+      network_issue: report.network_issue || "",
+      security_type: report.security_type || "",
+      security_details: report.security_details || "",
+      facility_type: report.facility_type || "",
+      facility_issue: report.facility_issue || "",
       timestamp: report.timestamp || new Date().toISOString()
     });
     setOpen(true);
@@ -426,6 +450,166 @@ const IncidentReports = () => {
                     </>
                   )}
                   
+                  {/* Software-specific fields */}
+                  {formData.incident_type === "software" && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="software_type">Software Type *</Label>
+                        <Select value={formData.software_type} onValueChange={(value) => setFormData({ ...formData, software_type: value })}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select software type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="operating_system">Operating System</SelectItem>
+                            <SelectItem value="application">Application Software</SelectItem>
+                            <SelectItem value="browser">Web Browser</SelectItem>
+                            <SelectItem value="antivirus">Antivirus/Security</SelectItem>
+                            <SelectItem value="office">Office Suite</SelectItem>
+                            <SelectItem value="database">Database</SelectItem>
+                            <SelectItem value="development">Development Tools</SelectItem>
+                            <SelectItem value="driver">Driver Issue</SelectItem>
+                            <SelectItem value="update">Update/Patch Issue</SelectItem>
+                            <SelectItem value="license">License/Activation</SelectItem>
+                            <SelectItem value="other">Other Software</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="software_issue">Issue Type *</Label>
+                        <Select value={formData.software_issue} onValueChange={(value) => setFormData({ ...formData, software_issue: value })}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select issue type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="crash">Application Crash</SelectItem>
+                            <SelectItem value="freeze">System Freeze</SelectItem>
+                            <SelectItem value="slow">Slow Performance</SelectItem>
+                            <SelectItem value="error">Error Message</SelectItem>
+                            <SelectItem value="not_opening">Won't Open/Start</SelectItem>
+                            <SelectItem value="compatibility">Compatibility Issue</SelectItem>
+                            <SelectItem value="missing">Missing Features</SelectItem>
+                            <SelectItem value="corrupted">Corrupted Files</SelectItem>
+                            <SelectItem value="other">Other Issue</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </>
+                  )}
+                  
+                  {/* Network-specific fields */}
+                  {formData.incident_type === "network" && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="network_type">Network Type *</Label>
+                        <Select value={formData.network_type} onValueChange={(value) => setFormData({ ...formData, network_type: value })}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select network type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="wifi">WiFi/Wireless</SelectItem>
+                            <SelectItem value="ethernet">Ethernet/Wired</SelectItem>
+                            <SelectItem value="internet">Internet Connection</SelectItem>
+                            <SelectItem value="server">Server Connection</SelectItem>
+                            <SelectItem value="vpn">VPN</SelectItem>
+                            <SelectItem value="printer_network">Network Printer</SelectItem>
+                            <SelectItem value="file_sharing">File Sharing</SelectItem>
+                            <SelectItem value="other">Other Network</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="network_issue">Issue Type *</Label>
+                        <Select value={formData.network_issue} onValueChange={(value) => setFormData({ ...formData, network_issue: value })}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select issue type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="no_connection">No Connection</SelectItem>
+                            <SelectItem value="slow_speed">Slow Speed</SelectItem>
+                            <SelectItem value="intermittent">Intermittent Connection</SelectItem>
+                            <SelectItem value="cant_connect">Can't Connect to Network</SelectItem>
+                            <SelectItem value="limited_access">Limited Access</SelectItem>
+                            <SelectItem value="dns_error">DNS Error</SelectItem>
+                            <SelectItem value="timeout">Connection Timeout</SelectItem>
+                            <SelectItem value="other">Other Issue</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </>
+                  )}
+                  
+                  {/* Security-specific fields */}
+                  {formData.incident_type === "security" && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="security_type">Security Type *</Label>
+                        <Select value={formData.security_type} onValueChange={(value) => setFormData({ ...formData, security_type: value })}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select security type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="malware">Malware/Virus</SelectItem>
+                            <SelectItem value="phishing">Phishing Attempt</SelectItem>
+                            <SelectItem value="unauthorized_access">Unauthorized Access</SelectItem>
+                            <SelectItem value="data_breach">Data Breach</SelectItem>
+                            <SelectItem value="suspicious_activity">Suspicious Activity</SelectItem>
+                            <SelectItem value="password_issue">Password/Account Issue</SelectItem>
+                            <SelectItem value="physical_security">Physical Security</SelectItem>
+                            <SelectItem value="policy_violation">Policy Violation</SelectItem>
+                            <SelectItem value="other">Other Security</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="security_details">Security Details *</Label>
+                        <Input
+                          id="security_details"
+                          value={formData.security_details}
+                          onChange={(e) => setFormData({ ...formData, security_details: e.target.value })}
+                          placeholder="e.g. Suspicious email received, Unknown login attempt"
+                          required={formData.incident_type === "security"}
+                        />
+                      </div>
+                    </>
+                  )}
+                  
+                  {/* Facility-specific fields */}
+                  {formData.incident_type === "facility" && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="facility_type">Facility Type *</Label>
+                        <Select value={formData.facility_type} onValueChange={(value) => setFormData({ ...formData, facility_type: value })}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select facility type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="electrical">Electrical</SelectItem>
+                            <SelectItem value="lighting">Lighting</SelectItem>
+                            <SelectItem value="hvac">HVAC/Air Conditioning</SelectItem>
+                            <SelectItem value="plumbing">Plumbing</SelectItem>
+                            <SelectItem value="furniture">Furniture</SelectItem>
+                            <SelectItem value="door_lock">Door/Lock</SelectItem>
+                            <SelectItem value="window">Window</SelectItem>
+                            <SelectItem value="floor">Floor/Ceiling</SelectItem>
+                            <SelectItem value="cleanliness">Cleanliness</SelectItem>
+                            <SelectItem value="safety">Safety Hazard</SelectItem>
+                            <SelectItem value="other">Other Facility</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="facility_issue">Issue Description *</Label>
+                        <Input
+                          id="facility_issue"
+                          value={formData.facility_issue}
+                          onChange={(e) => setFormData({ ...formData, facility_issue: e.target.value })}
+                          placeholder="e.g. Broken chair, Leaking pipe, No lights"
+                          required={formData.incident_type === "facility"}
+                        />
+                      </div>
+                    </>
+                  )}
+                  
                   <div className="space-y-2">
                     <Label htmlFor="severity">Severity</Label>
                     <Select value={formData.severity} onValueChange={(value) => setFormData({ ...formData, severity: value })}>
@@ -441,13 +625,20 @@ const IncidentReports = () => {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="location">Location</Label>
-                    <Input
-                      id="location"
-                      value={formData.location}
-                      onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                      placeholder="e.g. COLB-1-6"
-                    />
+                    <Label htmlFor="location">Location *</Label>
+                    <Select value={formData.location} onValueChange={(value) => setFormData({ ...formData, location: value })}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select room location" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="COMLAB 101">COMLAB 101</SelectItem>
+                        <SelectItem value="COMLAB 102">COMLAB 102</SelectItem>
+                        <SelectItem value="COMLAB 103">COMLAB 103</SelectItem>
+                        <SelectItem value="COMLAB 104">COMLAB 104</SelectItem>
+                        <SelectItem value="COMLAB 105">COMLAB 105</SelectItem>
+                        <SelectItem value="COMLAB 106">COMLAB 106</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="reported_by">Reported By *</Label>
@@ -564,6 +755,62 @@ const IncidentReports = () => {
                       <div>
                         <Label className="font-semibold">Damage Description</Label>
                         <p className="mt-1">{viewingReport.hardware_damage || 'Not specified'}</p>
+                      </div>
+                    </>
+                  )}
+                  
+                  {/* Software-specific details */}
+                  {viewingReport.incident_type === "software" && (
+                    <>
+                      <div>
+                        <Label className="font-semibold">Software Type</Label>
+                        <p className="mt-1 capitalize">{viewingReport.software_type?.replace('_', ' ') || 'Not specified'}</p>
+                      </div>
+                      <div>
+                        <Label className="font-semibold">Issue Type</Label>
+                        <p className="mt-1 capitalize">{viewingReport.software_issue?.replace('_', ' ') || 'Not specified'}</p>
+                      </div>
+                    </>
+                  )}
+                  
+                  {/* Network-specific details */}
+                  {viewingReport.incident_type === "network" && (
+                    <>
+                      <div>
+                        <Label className="font-semibold">Network Type</Label>
+                        <p className="mt-1 capitalize">{viewingReport.network_type?.replace('_', ' ') || 'Not specified'}</p>
+                      </div>
+                      <div>
+                        <Label className="font-semibold">Issue Type</Label>
+                        <p className="mt-1 capitalize">{viewingReport.network_issue?.replace('_', ' ') || 'Not specified'}</p>
+                      </div>
+                    </>
+                  )}
+                  
+                  {/* Security-specific details */}
+                  {viewingReport.incident_type === "security" && (
+                    <>
+                      <div>
+                        <Label className="font-semibold">Security Type</Label>
+                        <p className="mt-1 capitalize">{viewingReport.security_type?.replace('_', ' ') || 'Not specified'}</p>
+                      </div>
+                      <div>
+                        <Label className="font-semibold">Security Details</Label>
+                        <p className="mt-1">{viewingReport.security_details || 'Not specified'}</p>
+                      </div>
+                    </>
+                  )}
+                  
+                  {/* Facility-specific details */}
+                  {viewingReport.incident_type === "facility" && (
+                    <>
+                      <div>
+                        <Label className="font-semibold">Facility Type</Label>
+                        <p className="mt-1 capitalize">{viewingReport.facility_type?.replace('_', ' ') || 'Not specified'}</p>
+                      </div>
+                      <div>
+                        <Label className="font-semibold">Issue Description</Label>
+                        <p className="mt-1">{viewingReport.facility_issue || 'Not specified'}</p>
                       </div>
                     </>
                   )}

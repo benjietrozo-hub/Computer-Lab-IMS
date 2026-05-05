@@ -195,10 +195,16 @@ function generate_uuid() {
 }
 
 function handle_put(mysqli $conn): void {
+    // Clear any output buffers to prevent "Failed to fetch" errors
+    while (ob_get_level()) {
+        ob_end_clean();
+    }
+    
     parse_str($_SERVER['QUERY_STRING'] ?? '', $query);
     $id = $query['id'] ?? null;
     if (!$id) {
         send_json(['success' => false, 'error' => 'Missing id'], 400);
+        return;
     }
 
     $input = get_json_input();
@@ -206,10 +212,16 @@ function handle_put(mysqli $conn): void {
     // Get current record
     $current_sql = "SELECT * FROM borrow_items WHERE id=?";
     $current_stmt = $conn->prepare($current_sql);
+    if (!$current_stmt) {
+        send_json(['success' => false, 'error' => 'Database error: ' . $conn->error], 500);
+        return;
+    }
+    
     $current_stmt->bind_param('s', $id);
     $current_stmt->execute();
     $current_result = $current_stmt->get_result();
     $current_record = $current_result->fetch_assoc();
+    $current_stmt->close();
 
     if (!$current_record) {
         send_json(['success' => false, 'error' => 'Record not found'], 404);
@@ -225,11 +237,17 @@ function handle_put(mysqli $conn): void {
     if ($status === 'returned' && $current_record['status'] !== 'returned') {
         // Verify admin user exists (but don't require password)
         if (!$admin_id) {
-            send_json(['success' => false, 'error' => 'Admin ID is required'], 400);
+            send_json(['success' => false, 'error' => 'Admin ID is required to process returns'], 400);
+            return;
         }
         
-        $admin_sql = "SELECT id FROM users WHERE id = ? AND role IN ('admin', 'staff')";
+        $admin_sql = "SELECT id, role FROM users WHERE id = ?";
         $admin_stmt = $conn->prepare($admin_sql);
+        if (!$admin_stmt) {
+            send_json(['success' => false, 'error' => 'Database error: ' . $conn->error], 500);
+            return;
+        }
+        
         $admin_stmt->bind_param('s', $admin_id);
         $admin_stmt->execute();
         $admin_result = $admin_stmt->get_result();
@@ -237,7 +255,14 @@ function handle_put(mysqli $conn): void {
         $admin_stmt->close();
         
         if (!$admin_user) {
-            send_json(['success' => false, 'error' => 'Invalid admin user'], 401);
+            send_json(['success' => false, 'error' => 'Admin user not found'], 404);
+            return;
+        }
+        
+        // Check if user has admin privileges
+        if (!in_array($admin_user['role'], ['admin', 'staff', 'instructor', 'teacher'])) {
+            send_json(['success' => false, 'error' => 'Insufficient privileges to process returns'], 403);
+            return;
         }
         
         $conn->begin_transaction();
@@ -253,8 +278,15 @@ function handle_put(mysqli $conn): void {
                 WHERE id = ?";
             
             $update_stmt = $conn->prepare($update_sql);
+            if (!$update_stmt) {
+                throw new Exception('Failed to prepare update statement: ' . $conn->error);
+            }
+            
             $update_stmt->bind_param('ssss', $return_condition, $return_comments, $admin_id, $id);
-            $update_stmt->execute();
+            if (!$update_stmt->execute()) {
+                throw new Exception('Failed to update borrow record: ' . $update_stmt->error);
+            }
+            $update_stmt->close();
             
             // Step 2: Handle inventory based on condition
             if ($return_condition === 'good') {
@@ -279,17 +311,29 @@ function handle_put(mysqli $conn): void {
             
             $conn->commit();
             send_json(['success' => true, 'message' => 'Item returned successfully']);
+            return;
             
         } catch (Exception $e) {
             $conn->rollback();
+            error_log("Return processing error: " . $e->getMessage());
             send_json(['success' => false, 'error' => 'Return processing failed: ' . $e->getMessage()], 500);
+            return;
         }
     } else {
         // Regular update for other fields
         $sql = "UPDATE borrow_items SET status=? WHERE id=?";
         $stmt = $conn->prepare($sql);
+        if (!$stmt) {
+            send_json(['success' => false, 'error' => 'Database error: ' . $conn->error], 500);
+            return;
+        }
+        
         $stmt->bind_param('ss', $status, $id);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            send_json(['success' => false, 'error' => 'Update failed: ' . $stmt->error], 500);
+            return;
+        }
+        $stmt->close();
         
         // Log borrow item update
         logUpdate('borrow_items', 'borrow_item', $id, $current_record['borrower_name'] . ' - ' . $current_record['item'], 
@@ -297,7 +341,8 @@ function handle_put(mysqli $conn): void {
             ['status' => $status]
         );
         
-        send_json(['success' => true]);
+        send_json(['success' => true, 'message' => 'Status updated successfully']);
+        return;
     }
 }
 

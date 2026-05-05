@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fix Borrow Items Columns</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #dc2626;
+            padding-bottom: 10px;
+        }
+        .alert {
+            padding: 15px;
+            border-radius: 6px;
+            margin: 20px 0;
+        }
+        .alert-error {
+            background: #fee;
+            border: 2px solid #dc2626;
+            color: #991b1b;
+        }
+        .alert-success {
+            background: #d1fae5;
+            border: 2px solid #10b981;
+            color: #065f46;
+        }
+        .alert-info {
+            background: #dbeafe;
+            border: 2px solid #3b82f6;
+            color: #1e40af;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px 10px 0;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        button.danger {
+            background: #dc2626;
+        }
+        button.danger:hover {
+            background: #b91c1c;
+        }
+        pre {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 13px;
+        }
+        .step {
+            background: #f9fafb;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin: 15px 0;
+        }
+        .step h3 {
+            margin-top: 0;
+            color: #667eea;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        th {
+            background: #f3f4f6;
+            font-weight: bold;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .badge-missing {
+            background: #fee;
+            color: #dc2626;
+        }
+        .badge-present {
+            background: #d1fae5;
+            color: #10b981;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Fix "Unknown Column" Error in Mark as Returned</h1>
+        
+        <div class="alert alert-error">
+            <strong>⚠️ Problem:</strong> The borrow_items table is missing columns needed for the "Mark as Returned" feature.
+            <br><br>
+            <strong>Error:</strong> "Unknown column 'return_condition'" or similar database errors.
+        </div>
+
+        <div class="step">
+            <h3>Step 1: Check Current Database Status</h3>
+            <button onclick="checkColumns()">Check Database Columns</button>
+            <div id="checkResult"></div>
+        </div>
+
+        <div class="step">
+            <h3>Step 2: Run Migration to Add Missing Columns</h3>
+            <p>Click the button below to run the migration script:</p>
+            <button class="danger" onclick="showMigrationInstructions()">Show Migration Instructions</button>
+            <div id="migrationInstructions"></div>
+        </div>
+
+        <div class="step">
+            <h3>Step 3: Verify Fix</h3>
+            <button onclick="verifyFix()">Verify Columns Added</button>
+            <div id="verifyResult"></div>
+        </div>
+    </div>
+
+    <script>
+        async function checkColumns() {
+            const resultDiv = document.getElementById('checkResult');
+            resultDiv.innerHTML = '<div class="loading"></div> Checking database...';
+
+            try {
+                const response = await fetch('http://localhost/labmate/labmate-guardian/check-borrow-items-columns.php');
+                const data = await response.json();
+
+                console.log('Column check result:', data);
+
+                if (data.all_columns_present) {
+                    resultDiv.innerHTML = `
+                        <div class="alert alert-success" style="margin-top: 15px;">
+                            <strong>✅ All columns are present!</strong><br>
+                            The borrow_items table has all ${data.total_columns} required columns.<br>
+                            You can now use the Mark as Returned feature.
+                        </div>
+                    `;
+                } else {
+                    let html = `
+                        <div class="alert alert-error" style="margin-top: 15px;">
+                            <strong>❌ Missing Columns Detected!</strong><br>
+                            Found ${data.total_columns} columns, but ${data.missing_columns.length} required columns are missing.
+                        </div>
+                    `;
+
+                    if (data.missing_columns.length > 0) {
+                        html += `
+                            <h4>Missing Columns:</h4>
+                            <ul>
+                                ${data.missing_columns.map(col => `<li><span class="badge badge-missing">${col}</span></li>`).join('')}
+                            </ul>
+                        `;
+                    }
+
+                    html += `
+                        <h4>Current Columns:</h4>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Column Name</th>
+                                    <th>Type</th>
+                                    <th>Null</th>
+                                    <th>Default</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${data.columns.map(col => `
+                                    <tr>
+                                        <td><strong>${col.Field}</strong></td>
+                                        <td>${col.Type}</td>
+                                        <td>${col.Null}</td>
+                                        <td>${col.Default || 'NULL'}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                        <p><strong>Action needed:</strong> Run the migration script in Step 2.</p>
+                    `;
+
+                    resultDiv.innerHTML = html;
+                }
+
+            } catch (error) {
+                console.error('Error checking columns:', error);
+                resultDiv.innerHTML = `
+                    <div class="alert alert-error" style="margin-top: 15px;">
+                        <strong>Error:</strong> ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        function showMigrationInstructions() {
+            const instructionsDiv = document.getElementById('migrationInstructions');
+            instructionsDiv.innerHTML = `
+                <div class="alert alert-info" style="margin-top: 15px;">
+                    <h4>📋 Migration Instructions:</h4>
+                    
+                    <p><strong>Option 1: Using Batch File (Easiest)</strong></p>
+                    <ol>
+                        <li>Open File Explorer</li>
+                        <li>Navigate to: <code>labmate-guardian/database/</code></li>
+                        <li>Double-click: <code>run_borrow_items_migration.bat</code></li>
+                        <li>Wait for "Migration completed successfully!" message</li>
+                        <li>Press any key to close the window</li>
+                    </ol>
+
+                    <p><strong>Option 2: Using phpMyAdmin</strong></p>
+                    <ol>
+                        <li>Open phpMyAdmin: <a href="http://localhost/phpmyadmin" target="_blank">http://localhost/phpmyadmin</a></li>
+                        <li>Select database: <code>labmate_guardian</code></li>
+                        <li>Click "SQL" tab</li>
+                        <li>Copy and paste the SQL below</li>
+                        <li>Click "Go" button</li>
+                    </ol>
+
+                    <p><strong>SQL to run:</strong></p>
+                    <pre>-- Add return_condition column
+ALTER TABLE borrow_items 
+ADD COLUMN return_condition VARCHAR(50) DEFAULT NULL AFTER status;
+
+-- Add return_comments column
+ALTER TABLE borrow_items 
+ADD COLUMN return_comments TEXT DEFAULT NULL AFTER return_condition;
+
+-- Add return_processed_by column
+ALTER TABLE borrow_items 
+ADD COLUMN return_processed_by CHAR(36) DEFAULT NULL AFTER return_comments;
+
+-- Add return_processed_at column
+ALTER TABLE borrow_items 
+ADD COLUMN return_processed_at DATETIME DEFAULT NULL AFTER return_processed_by;
+
+-- Add actual_return_date column
+ALTER TABLE borrow_items 
+ADD COLUMN actual_return_date DATE DEFAULT NULL AFTER return_date;
+
+-- Add foreign key
+ALTER TABLE borrow_items 
+ADD CONSTRAINT fk_borrow_items_return_processed_by 
+FOREIGN KEY (return_processed_by) REFERENCES users(id) ON DELETE SET NULL;</pre>
+
+                    <p><strong>Option 3: Using Command Line</strong></p>
+                    <pre>cd C:\\xampp\\htdocs\\labmate\\labmate-guardian\\database
+mysql -u root -p labmate_guardian < migrations\\008_add_borrow_items_return_columns.sql</pre>
+
+                    <p style="margin-top: 20px;">
+                        <button onclick="verifyFix()">I've run the migration - Verify Now</button>
+                    </p>
+                </div>
+            `;
+        }
+
+        async function verifyFix() {
+            const resultDiv = document.getElementById('verifyResult');
+            resultDiv.innerHTML = '<div class="loading"></div> Verifying...';
+
+            try {
+                const response = await fetch('http://localhost/labmate/labmate-guardian/check-borrow-items-columns.php');
+                const data = await response.json();
+
+                if (data.all_columns_present) {
+                    resultDiv.innerHTML = `
+                        <div class="alert alert-success" style="margin-top: 15px;">
+                            <strong>✅ SUCCESS! All columns are now present!</strong><br><br>
+                            The borrow_items table now has all required columns:<br>
+                            <ul>
+                                <li>✓ return_condition</li>
+                                <li>✓ return_comments</li>
+                                <li>✓ return_processed_by</li>
+                                <li>✓ return_processed_at</li>
+                                <li>✓ actual_return_date</li>
+                            </ul>
+                            <br>
+                            <strong>You can now use the Mark as Returned feature!</strong><br>
+                            Go to Borrow Items Management and try marking an item as returned.
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="alert alert-error" style="margin-top: 15px;">
+                            <strong>❌ Migration not complete</strong><br>
+                            Still missing ${data.missing_columns.length} columns:<br>
+                            <ul>
+                                ${data.missing_columns.map(col => `<li>${col}</li>`).join('')}
+                            </ul>
+                            <br>
+                            Please run the migration script again.
+                        </div>
+                    `;
+                }
+
+            } catch (error) {
+                console.error('Error verifying:', error);
+                resultDiv.innerHTML = `
+                    <div class="alert alert-error" style="margin-top: 15px;">
+                        <strong>Error:</strong> ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        // Auto-check on page load
+        window.addEventListener('load', () => {
+            checkColumns();
+        });
+    </script>
+</body>
+</html>

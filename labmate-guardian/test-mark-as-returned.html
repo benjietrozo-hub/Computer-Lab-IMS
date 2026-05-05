@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Mark as Returned</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f9f9f9;
+            border-left: 4px solid #667eea;
+        }
+        .section h3 {
+            margin-top: 0;
+            color: #667eea;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #5568d3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 6px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+        pre {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .badge-borrowed {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .badge-returned {
+            background: #d1fae5;
+            color: #065f46;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Test Mark as Returned Functionality</h1>
+        
+        <div class="section">
+            <h3>Step 1: Load Test Data</h3>
+            <button onclick="loadTestData()">Load Test Data</button>
+            <div id="testData"></div>
+        </div>
+
+        <div class="section">
+            <h3>Step 2: Test Mark as Returned</h3>
+            <button onclick="testMarkAsReturned('good')" id="testGoodBtn" disabled>Test with "Good" Condition</button>
+            <button onclick="testMarkAsReturned('damaged')" id="testDamagedBtn" disabled>Test with "Damaged" Condition</button>
+            <button onclick="testMarkAsReturned('needs_repair')" id="testRepairBtn" disabled>Test with "Needs Repair" Condition</button>
+            <div id="testResult"></div>
+        </div>
+
+        <div class="section">
+            <h3>Step 3: Check Browser Console</h3>
+            <p>Open your browser's Developer Tools (F12) and check the Console tab for detailed logs.</p>
+            <button onclick="console.clear()">Clear Console</button>
+        </div>
+
+        <div class="section">
+            <h3>Step 4: Verify Database</h3>
+            <button onclick="verifyDatabase()">Check Database Status</button>
+            <div id="dbResult"></div>
+        </div>
+    </div>
+
+    <script>
+        let testItem = null;
+        let testAdmin = null;
+
+        async function loadTestData() {
+            try {
+                console.log('Loading test data...');
+                const response = await fetch('http://localhost/labmate/labmate-guardian/test-mark-as-returned.php');
+                const data = await response.json();
+                
+                console.log('Test data loaded:', data);
+                
+                if (data.error) {
+                    document.getElementById('testData').innerHTML = `
+                        <div class="result error">
+                            <strong>Error:</strong> ${data.error}
+                        </div>
+                    `;
+                    return;
+                }
+
+                testItem = data.test_item;
+                testAdmin = data.test_admin;
+
+                document.getElementById('testData').innerHTML = `
+                    <div class="result info">
+                        <strong>Test Item:</strong><br>
+                        ID: ${testItem.id}<br>
+                        Borrower: ${testItem.borrower_name}<br>
+                        Item: ${testItem.item}<br>
+                        Quantity: ${testItem.quantity}<br>
+                        Status: <span class="badge badge-${testItem.status}">${testItem.status}</span>
+                        <br><br>
+                        <strong>Test Admin:</strong><br>
+                        ID: ${testAdmin.id}<br>
+                        Role: ${testAdmin.role}<br>
+                        Email: ${testAdmin.email}
+                        <br><br>
+                        <strong>API Endpoint:</strong><br>
+                        ${data.test_url}
+                    </div>
+                `;
+
+                // Enable test buttons
+                document.getElementById('testGoodBtn').disabled = false;
+                document.getElementById('testDamagedBtn').disabled = false;
+                document.getElementById('testRepairBtn').disabled = false;
+
+            } catch (error) {
+                console.error('Error loading test data:', error);
+                document.getElementById('testData').innerHTML = `
+                    <div class="result error">
+                        <strong>Error:</strong> ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        async function testMarkAsReturned(condition) {
+            if (!testItem || !testAdmin) {
+                alert('Please load test data first!');
+                return;
+            }
+
+            try {
+                console.log(`Testing mark as returned with condition: ${condition}`);
+                
+                const url = `http://localhost/labmate/labmate-guardian/api/borrow_items.php?id=${testItem.id}`;
+                const payload = {
+                    status: 'returned',
+                    return_condition: condition,
+                    return_notes: `Test return with ${condition} condition at ${new Date().toLocaleString()}`,
+                    admin_id: testAdmin.id
+                };
+
+                console.log('Request URL:', url);
+                console.log('Request Payload:', payload);
+
+                const response = await fetch(url, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                console.log('Response status:', response.status);
+                console.log('Response headers:', [...response.headers.entries()]);
+
+                const responseText = await response.text();
+                console.log('Response text:', responseText);
+
+                let result;
+                try {
+                    result = JSON.parse(responseText);
+                } catch (e) {
+                    console.error('Failed to parse JSON:', e);
+                    throw new Error(`Invalid JSON response: ${responseText.substring(0, 200)}`);
+                }
+
+                console.log('Parsed result:', result);
+
+                if (result.success) {
+                    document.getElementById('testResult').innerHTML = `
+                        <div class="result success">
+                            <strong>✅ SUCCESS!</strong><br>
+                            ${result.message || 'Item marked as returned successfully'}
+                            <br><br>
+                            <strong>Response:</strong>
+                            <pre>${JSON.stringify(result, null, 2)}</pre>
+                        </div>
+                    `;
+                } else {
+                    document.getElementById('testResult').innerHTML = `
+                        <div class="result error">
+                            <strong>❌ FAILED!</strong><br>
+                            ${result.error || 'Unknown error'}
+                            <br><br>
+                            <strong>Response:</strong>
+                            <pre>${JSON.stringify(result, null, 2)}</pre>
+                        </div>
+                    `;
+                }
+
+            } catch (error) {
+                console.error('Test error:', error);
+                document.getElementById('testResult').innerHTML = `
+                    <div class="result error">
+                        <strong>❌ ERROR!</strong><br>
+                        ${error.message}
+                        <br><br>
+                        <strong>Stack:</strong>
+                        <pre>${error.stack}</pre>
+                    </div>
+                `;
+            }
+        }
+
+        async function verifyDatabase() {
+            if (!testItem) {
+                alert('Please load test data first!');
+                return;
+            }
+
+            try {
+                const response = await fetch('http://localhost/labmate/labmate-guardian/api/borrow_items.php');
+                const result = await response.json();
+
+                if (result.success) {
+                    const item = result.data.find(i => i.id === testItem.id);
+                    
+                    if (item) {
+                        document.getElementById('dbResult').innerHTML = `
+                            <div class="result info">
+                                <strong>Current Database Status:</strong><br>
+                                Status: <span class="badge badge-${item.status}">${item.status}</span><br>
+                                Return Condition: ${item.return_condition || 'N/A'}<br>
+                                Return Comments: ${item.return_comments || 'N/A'}<br>
+                                Return Processed By: ${item.return_processed_by || 'N/A'}<br>
+                                Return Processed At: ${item.return_processed_at || 'N/A'}
+                                <br><br>
+                                <strong>Full Record:</strong>
+                                <pre>${JSON.stringify(item, null, 2)}</pre>
+                            </div>
+                        `;
+                    } else {
+                        document.getElementById('dbResult').innerHTML = `
+                            <div class="result error">
+                                Item not found in database!
+                            </div>
+                        `;
+                    }
+                }
+
+            } catch (error) {
+                console.error('Verify error:', error);
+                document.getElementById('dbResult').innerHTML = `
+                    <div class="result error">
+                        <strong>Error:</strong> ${error.message}
+                    </div>
+                `;
+            }
+        }
+
+        // Auto-load test data on page load
+        window.addEventListener('load', () => {
+            console.log('Page loaded, ready to test!');
+        });
+    </script>
+</body>
+</html>
